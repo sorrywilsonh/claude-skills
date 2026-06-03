@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node
+node_modules/
+
+# 通用暫存/快取
+*.log
+*.tmp
+.cache/
+
+# 安全：避免誤上傳憑證類檔案
+*.pem
+*.key
+id_rsa*
+*.env
+.env.*
+credentials*.json
+*.p12
