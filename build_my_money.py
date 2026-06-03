@@ -77,11 +77,13 @@ for i, (cur, val) in enumerate(rates, start=5):
     b = s.cell(row=i, column=2, value=val); b.fill = FILL_AUT; b.number_format = NT2
 s["A8"].fill = FILL_AUT; s["B8"].fill = FILL_AUT  # 預留一列
 s["A10"] = "💡 想新增幣別：在上表加一列並填 GOOGLEFINANCE 匯率公式"; s["A10"].font = NOTE
+s["A11"] = "💡 同一帳戶有多種幣別時，請分多列填（如富邦銀行 TWD 一列、USD 一列）"; s["A11"].font = NOTE
 
 # 帳戶清單（手動）
 s["D4"] = "✍️ 帳戶名稱"; s["E4"] = "✍️ 類型"; s["F4"] = "✍️ 幣別"
 for c in ("D4", "E4", "F4"): s[c].fill = FILL_MANHEAD; s[c].font = HEAD_M; s[c].alignment = CTR
-example_accts = [("台新銀行", "銀行", "TWD"), ("國泰證券", "證券", "TWD"),
+example_accts = [("台新銀行", "銀行", "TWD"), ("富邦銀行", "銀行", "TWD"),
+                 ("富邦銀行", "銀行", "USD"), ("國泰證券", "證券", "TWD"),
                  ("Firstrade", "Firstrade", "USD"), ("基富通基金", "基金", "TWD")]
 for i, (n, t, cur) in enumerate(example_accts, start=5):
     s.cell(row=i, column=4, value=n); s.cell(row=i, column=5, value=t); s.cell(row=i, column=6, value=cur)
@@ -187,29 +189,33 @@ h.freeze_panes = "A5"
 
 # ============================================================ 帳戶總覽
 a = wb.create_sheet("帳戶總覽")
-a["A1"] = "🏦 帳戶總覽（類型/幣別自動帶入；現金餘額需手動）"; a["A1"].font = TITLE
+a["A1"] = "🏦 帳戶總覽（同一帳戶若有多種幣別，請分多列：帳戶相同、幣別不同）"; a["A1"].font = TITLE
 legend(a)
-acc_cols = [("帳戶名稱","M",16),("類型","A",10),("幣別","A",8),("現金餘額(原幣)","M",14),
+a["A3"] = "💡 類型自動帶入；幣別請手動選；持股市值依『帳戶＋幣別』分別加總。"; a["A3"].font = NOTE
+acc_cols = [("帳戶名稱","M",16),("類型","A",10),("幣別","M",8),("現金餘額(原幣)","M",14),
             ("持股市值(台幣)","A",14),("台幣總值","A",14),("佔比%","A",10)]
 headers(a, 4, acc_cols)
 A_R1, A_R2 = 5, 24
 TOTAL_ROW = 26
 for r in range(A_R1, A_R2 + 1):
-    a.cell(row=r, column=2, value=f"=IFERROR(VLOOKUP($A{r},'設定'!$D$5:$F$54,2,FALSE),\"\")")
-    a.cell(row=r, column=3, value=f"=IFERROR(VLOOKUP($A{r},'設定'!$D$5:$F$54,3,FALSE),\"\")")
-    a.cell(row=r, column=5, value=f"=IF($A{r}=\"\",\"\",SUMIF('持股明細'!$A${H_R1}:$A${H_R2},$A{r},'持股明細'!$I${H_R1}:$I${H_R2}))")
+    a.cell(row=r, column=2, value=f"=IFERROR(VLOOKUP($A{r},'設定'!$D$5:$F$54,2,FALSE),\"\")")  # 類型自動
+    # 持股市值：依『帳戶＋幣別』加總（同帳戶不同幣別不會互相混到）
+    a.cell(row=r, column=5, value=f"=IF($A{r}=\"\",\"\",SUMIFS('持股明細'!$I${H_R1}:$I${H_R2},'持股明細'!$A${H_R1}:$A${H_R2},$A{r},'持股明細'!$D${H_R1}:$D${H_R2},$C{r}))")
     a.cell(row=r, column=6, value=f"=IF($A{r}=\"\",\"\",N($D{r})*VLOOKUP($C{r},{RATE_RANGE},2,FALSE)+N($E{r}))")
     a.cell(row=r, column=7, value=f"=IFERROR($F{r}/$F${TOTAL_ROW},\"\")")
-for col in (1,4): fill_col(a, col, A_R1, A_R2, "M")
-for col in (2,3,5,6,7): fill_col(a, col, A_R1, A_R2, "A")
+for col in (1,3,4): fill_col(a, col, A_R1, A_R2, "M")   # 帳戶/幣別/現金餘額 手動
+for col in (2,5,6,7): fill_col(a, col, A_R1, A_R2, "A")  # 類型/持股市值/總值/佔比 自動
 for col,fmt in [(4,NT),(5,NT),(6,NT),(7,PCT)]:
     for r in range(A_R1, A_R2+1): a.cell(row=r, column=col).number_format = fmt
 a.cell(row=TOTAL_ROW, column=1, value="總計").font = BOLDB
 tot = a.cell(row=TOTAL_ROW, column=6, value=f"=SUM(F{A_R1}:F{A_R2})"); tot.font = BOLDB; tot.number_format = NT; tot.fill = FILL_KPI
-a.cell(row=A_R1, column=1, value="台新銀行"); a.cell(row=A_R1, column=4, value=100000)
-a.cell(row=A_R1+1, column=1, value="國泰證券")
-a.cell(row=A_R1+2, column=1, value="Firstrade")
+# 範例：富邦銀行同時有 TWD 與 USD，分兩列
+examples = [("台新銀行","TWD",100000),("富邦銀行","TWD",50000),("富邦銀行","USD",3000),
+            ("國泰證券","TWD",0),("Firstrade","USD",0)]
+for i,(nm,cur,bal) in enumerate(examples):
+    a.cell(row=A_R1+i, column=1, value=nm); a.cell(row=A_R1+i, column=3, value=cur); a.cell(row=A_R1+i, column=4, value=bal)
 a.add_data_validation((dv := DataValidation(type="list", formula1=ACCT_LIST, allow_blank=True))); dv.add(f"A{A_R1}:A{A_R2}")
+a.add_data_validation((dv := DataValidation(type="list", formula1=CUR_LIST,  allow_blank=True))); dv.add(f"C{A_R1}:C{A_R2}")
 a.freeze_panes = "A5"
 
 # ============================================================ 資產快照
