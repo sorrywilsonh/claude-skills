@@ -8,12 +8,51 @@
 標色：✍️黃底=需手動填寫；🔒灰底=自動計算（勿改）。
 """
 import openpyxl
+from datetime import datetime
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.chart import PieChart, LineChart, BarChart, Reference
 from openpyxl.utils import get_column_letter
 
 OUT = "/Users/ucpc/Google Drive/我的雲端硬碟/my錢錢.xlsx"
+SOURCE = "/Users/ucpc/Downloads/錢錢.xlsx"   # 舊表匯出檔（只讀，不修改）
+BASELINE = datetime(2025, 12, 31)            # 期初建倉日
+
+# ---- 讀取舊表資料（只讀）----
+src = openpyxl.load_workbook(SOURCE, data_only=True)
+P = src["投資明細 (Portfolio)"]
+HOLDINGS = []
+for r in range(2, P.max_row + 1):
+    name = P.cell(r, 1).value
+    if name == "日期":            # 之後是彙總小表，停止
+        break
+    if name is None:
+        continue
+    code = P.cell(r, 2).value; cur = P.cell(r, 3).value
+    shares = P.cell(r, 4).value; cost = P.cell(r, 5).value; price = P.cell(r, 6).value
+    if shares is None or cost is None:
+        continue
+    if cur == "USD":
+        acct, ticker, fund = "Firstrade-美股", code, False
+    elif code and str(code).startswith("TPE:"):
+        acct, ticker, fund = "國泰證券-台股", code, False
+    else:                          # 基金（無代碼）
+        acct, ticker, fund = "安聯基金-台幣", name, True
+    HOLDINGS.append(dict(name=name, ticker=ticker, acct=acct, shares=shares, cost=cost,
+                         price=price, fund=fund))
+NW = src["資產總表(Net Worth)"]
+NETROWS = []
+for r in range(3, NW.max_row + 1):
+    d = NW.cell(r, 1).value; total = NW.cell(r, 9).value
+    if isinstance(d, datetime) and isinstance(total, (int, float)):
+        NETROWS.append((d, total))
+NETROWS.sort(key=lambda x: x[0])
+CASH_TWD = NW.cell(3, 2).value or 0
+CASH_USD = NW.cell(3, 3).value or 0
+CASH_JPY = NW.cell(3, 4).value or 0
+DEBT     = NW.cell(3, 8).value or 0
+print(f"來源讀取：持股 {len(HOLDINGS)} 筆、淨值快照 {len(NETROWS)} 筆、"
+      f"現金 TWD{CASH_TWD:,.0f}/USD{CASH_USD:,.0f}/JPY{CASH_JPY:,.0f}、負債 {DEBT:,.0f}")
 
 # ---- 樣式 ----
 TITLE   = Font(name="Arial", size=16, bold=True, color="1F3864")
@@ -110,10 +149,10 @@ for col in (4, 5, 6): fill_col(s, col, AC_R1, AC_R2, "M")
 for col in (7, 8): fill_col(s, col, AC_R1, AC_R2, "A")
 for w, col in [(14, "D"), (10, "E"), (10, "F"), (9, "G"), (18, "H")]:
     s.column_dimensions[col].width = w
-example_accts = [("富邦銀行", "銀行", "台幣"), ("富邦銀行", "銀行", "美金"),
-                 ("國泰證券", "證券", "台股"), ("國泰證券", "證券", "複委託"),
-                 ("Firstrade", "證券", "美股"), ("基富通", "基金", "台幣")]
-for i, (n, t, sub) in enumerate(example_accts, start=AC_R1):
+real_accts = [("現金", "銀行", "台幣"), ("現金", "銀行", "美金"), ("現金", "銀行", "日圓"),
+              ("國泰證券", "證券", "台股"), ("Firstrade", "證券", "美股"),
+              ("安聯基金", "基金", "台幣"), ("負債", "其他", "台幣")]
+for i, (n, t, sub) in enumerate(real_accts, start=AC_R1):
     s.cell(row=i, column=4, value=n); s.cell(row=i, column=5, value=t); s.cell(row=i, column=6, value=sub)
 
 # 子分類→幣別 對應表（可自行增減）
@@ -162,9 +201,10 @@ for col,fmt in [(1,'yyyy-mm-dd'),(6,NT2),(7,NT2),(9,NT2),(10,NT2),(11,NT2),(12,N
 # 範例（幣別欄 8 不填，自動）
 def putrow(ws, r, vals):
     for col, v in vals.items(): ws.cell(row=r, column=col, value=v)
-putrow(t, 5, {1:"2026-01-05",2:"國泰證券-台股",3:"買",4:"TPE:2330",5:"台積電",6:10,7:600,9:20,10:0})
-putrow(t, 6, {1:"2026-02-10",2:"Firstrade-美股",3:"買",4:"VOO",5:"Vanguard S&P500",6:5,7:480,9:0,10:0})
-putrow(t, 7, {1:"2026-03-01",2:"富邦銀行-台幣",3:"入金",6:1,7:50000,15:"薪轉"})
+# 期初建倉：每筆現有持股 → 一筆買進（用舊表股數×平均成本）
+for i, hd in enumerate(HOLDINGS):
+    putrow(t, T_R1 + i, {1: BASELINE, 2: hd["acct"], 3: "買", 4: hd["ticker"],
+                         5: hd["name"], 6: hd["shares"], 7: hd["cost"], 15: "期初建倉(舊表搬入)"})
 t.add_data_validation((dv := DataValidation(type="list", formula1=ACCT_KEY, allow_blank=True))); dv.add(f"B{T_R1}:B{T_R2}")
 t.add_data_validation((dv := DataValidation(type="list", formula1=TXN_LIST, allow_blank=True))); dv.add(f"C{T_R1}:C{T_R2}")
 t.freeze_panes = "A5"
@@ -177,7 +217,8 @@ h["A3"] = "💡 新增持股只需填：帳戶(子帳戶) / 代號 / 名稱。�
 hold_cols = [("帳戶(子帳戶)","M",16),("代號","M",12),("名稱","M",16),("幣別(自動)","A",10),
              ("股數","A",10),("平均成本","A",11),("即時股價","A",11),("市值(原幣)","A",13),
              ("台幣市值","A",13),("投入成本(原幣)","A",14),("未實現損益(原幣)","A",15),
-             ("報酬率%","A",10),("台幣投入成本","A",14),("台幣未實現損益","A",15)]
+             ("報酬率%","A",10),("台幣投入成本","A",14),("台幣未實現損益","A",15),
+             ("手動現價(基金用)","M",13)]
 headers(h, 4, hold_cols)
 H_R1, H_R2 = 5, 54
 TB = f"'交易明細'!$B${T_R1}:$B${T_R2}"; TD = f"'交易明細'!$D${T_R1}:$D${T_R2}"
@@ -193,7 +234,7 @@ for r in range(H_R1, H_R2 + 1):
     h.cell(row=r, column=4,  value=f"=IF($A{r}=\"\",\"\",{look_cur(f'$A{r}')})")                  # 幣別自動
     h.cell(row=r, column=5,  value=f"=IF($B{r}=\"\",\"\",{buyshares}-{sellshares})")               # 股數
     h.cell(row=r, column=6,  value=f"=IF($E{r}=\"\",\"\",IFERROR(({buycost})/{buyshares},0))")      # 平均成本
-    h.cell(row=r, column=7,  value=f"=IF($B{r}=\"\",\"\",IFERROR(GOOGLEFINANCE($B{r}),0))")          # 即時股價
+    h.cell(row=r, column=7,  value=f"=IF($B{r}=\"\",\"\",IFERROR(GOOGLEFINANCE($B{r}),N($O{r})))")    # 即時股價(失敗→手動現價)
     h.cell(row=r, column=8,  value=f"=IF($E{r}=\"\",\"\",$E{r}*$G{r})")                              # 市值原幣
     h.cell(row=r, column=9,  value=f"=IF($H{r}=\"\",\"\",$H{r}*VLOOKUP($D{r},{RATE_RANGE},2,FALSE))")# 台幣市值
     h.cell(row=r, column=10, value=f"=IF($E{r}=\"\",\"\",$E{r}*$F{r})")                              # 投入成本原幣
@@ -201,12 +242,16 @@ for r in range(H_R1, H_R2 + 1):
     h.cell(row=r, column=12, value=f"=IF($J{r}=\"\",\"\",IFERROR($K{r}/$J{r},0))")                   # 報酬率%
     h.cell(row=r, column=13, value=f"=IF($J{r}=\"\",\"\",$J{r}*VLOOKUP($D{r},{RATE_RANGE},2,FALSE))")# 台幣投入成本
     h.cell(row=r, column=14, value=f"=IF($I{r}=\"\",\"\",$I{r}-$M{r})")                              # 台幣未實現損益
-for col in (1,2,3): fill_col(h, col, H_R1, H_R2, "M")
+for col in (1,2,3,15): fill_col(h, col, H_R1, H_R2, "M")
 for col in range(4,15): fill_col(h, col, H_R1, H_R2, "A")
-for col,fmt in [(5,NT2),(6,NT2),(7,NT2),(8,NT2),(9,NT),(10,NT2),(11,NT2),(12,PCT),(13,NT),(14,NT)]:
+for col,fmt in [(5,NT2),(6,NT2),(7,NT2),(8,NT2),(9,NT),(10,NT2),(11,NT2),(12,PCT),(13,NT),(14,NT),(15,NT2)]:
     for r in range(H_R1, H_R2+1): h.cell(row=r, column=col).number_format = fmt
-putrow(h, 5, {1:"國泰證券-台股",2:"TPE:2330",3:"台積電"})
-putrow(h, 6, {1:"Firstrade-美股",2:"VOO",3:"Vanguard S&P500"})
+# 搬入持股（帳戶/代號/名稱；基金填手動現價）
+for i, hd in enumerate(HOLDINGS):
+    r = H_R1 + i
+    putrow(h, r, {1: hd["acct"], 2: hd["ticker"], 3: hd["name"]})
+    if hd["fund"] and hd["price"]:
+        h.cell(row=r, column=15, value=hd["price"])
 h.add_data_validation((dv := DataValidation(type="list", formula1=ACCT_KEY, allow_blank=True))); dv.add(f"A{H_R1}:A{H_R2}")
 h.freeze_panes = "A5"
 
@@ -232,8 +277,9 @@ for col,fmt in [(4,NT),(5,NT),(6,NT),(7,PCT)]:
     for r in range(A_R1, A_R2+1): a.cell(row=r, column=col).number_format = fmt
 a.cell(row=TOTAL_ROW, column=1, value="總計").font = BOLDB
 tot = a.cell(row=TOTAL_ROW, column=6, value=f"=SUM(F{A_R1}:F{A_R2})"); tot.font = BOLDB; tot.number_format = NT; tot.fill = FILL_KPI
-for i,(key,bal) in enumerate([("富邦銀行-台幣",50000),("富邦銀行-美金",3000),
-                              ("國泰證券-台股",0),("國泰證券-複委託",0),("Firstrade-美股",0)]):
+acc_rows = [("現金-台幣", CASH_TWD), ("現金-美金", CASH_USD), ("現金-日圓", CASH_JPY),
+            ("國泰證券-台股", 0), ("Firstrade-美股", 0), ("安聯基金-台幣", 0), ("負債-台幣", DEBT)]
+for i, (key, bal) in enumerate(acc_rows):
     a.cell(row=A_R1+i, column=1, value=key); a.cell(row=A_R1+i, column=4, value=bal)
 a.add_data_validation((dv := DataValidation(type="list", formula1=ACCT_KEY, allow_blank=True))); dv.add(f"A{A_R1}:A{A_R2}")
 a.freeze_panes = "A5"
@@ -246,7 +292,8 @@ sn["A3"] = "💡 請貼『數值』不要貼公式，否則歷史會跟著變動
 headers(sn, 4, [("日期","M",14),("淨資產合計(台幣)","M",18),("備註","M",24)])
 S_R1, S_R2 = 5, 64
 fill_col(sn, 1, S_R1, S_R2, "M", 'yyyy-mm-dd'); fill_col(sn, 2, S_R1, S_R2, "M", NT); fill_col(sn, 3, S_R1, S_R2, "M")
-for i,(d_,v) in enumerate([("2026-01-31",1200000),("2026-02-28",1255000),("2026-03-31",1310000)]):
+# 搬入歷史淨值快照（依日期排序）
+for i, (d_, v) in enumerate(NETROWS):
     sn.cell(row=S_R1+i, column=1, value=d_); sn.cell(row=S_R1+i, column=2, value=v)
 sn.freeze_panes = "A5"
 
