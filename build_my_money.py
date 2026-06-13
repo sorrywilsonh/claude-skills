@@ -13,7 +13,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.chart import PieChart, LineChart, BarChart, Reference
 from openpyxl.utils import get_column_letter
 
-OUT = "/Users/ucpc/Library/CloudStorage/GoogleDrive-honggy0329@gmail.com/我的雲端硬碟/my錢錢.xlsx"
+OUT = "/Users/ucpc/Google Drive/我的雲端硬碟/my錢錢.xlsx"
 
 # ---- 樣式 ----
 TITLE   = Font(name="Arial", size=16, bold=True, color="1F3864")
