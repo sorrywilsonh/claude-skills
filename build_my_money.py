@@ -166,7 +166,7 @@ fill_col(s, 10, 5, 14, "M"); fill_col(s, 11, 5, 14, "M")
 s.column_dimensions["J"].width = 11; s.column_dimensions["K"].width = 11
 
 # 其他清單
-for col, title, items in [("M", "類型清單", ["銀行", "證券", "基金", "保險", "其他"]),
+for col, title, items in [("M", "類型清單", ["銀行", "證券", "基金", "債務", "其他"]),
                           ("N", "幣別清單", ["TWD", "USD", "JPY"]),
                           ("P", "交易類型", ["買", "賣", "股息", "入金", "出金", "手續費", "稅"])]:
     s[f"{col}4"] = "🔒 " + title; s[f"{col}4"].fill = FILL_AUTHEAD; s[f"{col}4"].font = HEAD_AW
@@ -275,8 +275,11 @@ for col in (1,4): fill_col(a, col, A_R1, A_R2, "M")
 for col in (2,3,5,6,7): fill_col(a, col, A_R1, A_R2, "A")
 for col,fmt in [(4,NT),(5,NT),(6,NT),(7,PCT)]:
     for r in range(A_R1, A_R2+1): a.cell(row=r, column=col).number_format = fmt
-a.cell(row=TOTAL_ROW, column=1, value="總計").font = BOLDB
-tot = a.cell(row=TOTAL_ROW, column=6, value=f"=SUM(F{A_R1}:F{A_R2})"); tot.font = BOLDB; tot.number_format = NT; tot.fill = FILL_KPI
+a.cell(row=TOTAL_ROW, column=1, value="總計(資產−債務)").font = BOLDB
+# 淨資產 = 非債務帳戶台幣總值 − 債務帳戶台幣總值（類型「債務」視為負債扣除）
+_tot_f = (f"=SUMIFS(F{A_R1}:F{A_R2},B{A_R1}:B{A_R2},\"<>債務\")"
+          f"-SUMIFS(F{A_R1}:F{A_R2},B{A_R1}:B{A_R2},\"債務\")")
+tot = a.cell(row=TOTAL_ROW, column=6, value=_tot_f); tot.font = BOLDB; tot.number_format = NT; tot.fill = FILL_KPI
 acc_rows = [("現金-台幣", CASH_TWD), ("現金-美金", CASH_USD), ("現金-日圓", CASH_JPY),
             ("國泰證券-台股", 0), ("Firstrade-美股", 0), ("安聯基金-台幣", 0), ("負債-台幣", DEBT)]
 for i, (key, bal) in enumerate(acc_rows):
