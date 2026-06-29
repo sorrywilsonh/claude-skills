@@ -1,0 +1,173 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
+  
+  <g id="bg">
+    <rect x="0" y="0" width="1280" height="720" fill="#FFFFFF" />
+    <rect x="0" y="0" width="1280" height="720" fill="#F7F9FC" fill-opacity="0.5" />
+    <rect x="0" y="0" width="1280" height="720" fill="#FFFFFF" />
+    <line x1="632" y1="150" x2="632" y2="595" stroke="#D9E1EC" stroke-width="1.5" />
+  </g>
+
+  
+  <g id="header">
+    <rect x="0" y="0" width="1280" height="96" fill="#003366" />
+    <rect x="0" y="92" width="1280" height="4" fill="#1565C0" />
+    <text x="40" y="36" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="14" fill="#A9C2DD">TWSE｜證券交易所行情傳輸宣導</text>
+    <text x="40" y="76" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="30" font-weight="bold" fill="#FFFFFF">行情線路頻寬現況與改善建議</text>
+    <path fill="#FFFFFF" fill-opacity="0.12" d="M960,26 H1230 A10,10 0 0 1 1240,36 V60 A10,10 0 0 1 1230,70 H960 A10,10 0 0 1 950,60 V36 A10,10 0 0 1 960,26 Z" />
+    
+  <g transform="translate(968.0, 38.0) scale(0.8333333333333334)" fill="none" stroke="#FFFFFF" stroke-width="2">
+    <path d="M3 12h4.5l1.5 -6l4 12l2 -9l1.5 3h4.5" />
+  </g>
+    <text x="998" y="54" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="15" fill="#FFFFFF">尖峰時段　6/25 09:05</text>
+  </g>
+
+  
+  <g id="chart-traffic">
+    <path fill="#1565C0" d="M42,118 H43 A2,2 0 0 1 45,120 V138 A2,2 0 0 1 43,140 H42 A2,2 0 0 1 40,138 V120 A2,2 0 0 1 42,118 Z" />
+    <text x="56" y="137" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="24" font-weight="bold" fill="#003366">現況｜各 IP 尖峰流量 <tspan font-size="15" font-weight="normal" fill="#5B6B7B">(單位:Mbps)</tspan></text>
+    <g id="chartArea">
+      
+      <line x1="85" y1="254" x2="605" y2="254" stroke="#E3E9F2" stroke-width="1" stroke-dasharray="4,4" />
+      <line x1="85" y1="326" x2="605" y2="326" stroke="#E3E9F2" stroke-width="1" stroke-dasharray="4,4" />
+      <line x1="85" y1="398" x2="605" y2="398" stroke="#E3E9F2" stroke-width="1" stroke-dasharray="4,4" />
+      
+      <line x1="85" y1="254" x2="85" y2="470" stroke="#94A3B8" stroke-width="2" />
+      <line x1="85" y1="470" x2="605" y2="470" stroke="#94A3B8" stroke-width="2" />
+      
+      
+      <text x="76" y="474" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="13" fill="#5B6B7B" text-anchor="end">0</text>
+      <text x="76" y="402" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="13" fill="#5B6B7B" text-anchor="end">4</text>
+      <text x="76" y="330" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="13" fill="#5B6B7B" text-anchor="end">8</text>
+      <text x="76" y="258" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="13" fill="#5B6B7B" text-anchor="end">12</text>
+      
+      <g id="bar-1">
+        <path fill="#1565C0" d="M126,326 H166 A3,3 0 0 1 169,329 V467 A3,3 0 0 1 166,470 H126 A3,3 0 0 1 123,467 V329 A3,3 0 0 1 126,326 Z" />
+        <text x="146" y="318" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="15" font-weight="bold" fill="#1F2937" text-anchor="middle">8</text>
+        <text x="146" y="491" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="14" fill="#5B6B7B" text-anchor="middle">第一 IP</text>
+      </g>
+      
+      <g id="bar-2">
+        <path fill="#1565C0" d="M227,254 H267 A3,3 0 0 1 270,257 V467 A3,3 0 0 1 267,470 H227 A3,3 0 0 1 224,467 V257 A3,3 0 0 1 227,254 Z" />
+        <text x="247" y="246" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="15" font-weight="bold" fill="#1F2937" text-anchor="middle">12</text>
+        <text x="247" y="491" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="14" fill="#5B6B7B" text-anchor="middle">第二 IP</text>
+      </g>
+      
+      <g id="bar-3">
+        <path fill="#00897B" d="M328,416 H368 A3,3 0 0 1 371,419 V467 A3,3 0 0 1 368,470 H328 A3,3 0 0 1 325,467 V419 A3,3 0 0 1 328,416 Z" />
+        <text x="348" y="408" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="15" font-weight="bold" fill="#1F2937" text-anchor="middle">3</text>
+        <text x="348" y="491" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="14" fill="#5B6B7B" text-anchor="middle">第三 IP</text>
+      </g>
+      
+      <g id="bar-4">
+        <path fill="#90A4AE" d="M428,465 H470 A2,2 0 0 1 472,467 V468 A2,2 0 0 1 470,470 H428 A2,2 0 0 1 426,468 V467 A2,2 0 0 1 428,465 Z" />
+        <text x="449" y="456" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="14" font-weight="bold" fill="#5B6B7B" text-anchor="middle">0.3</text>
+        <text x="449" y="491" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="14" fill="#5B6B7B" text-anchor="middle">第四 IP</text>
+      </g>
+      
+      <g id="bar-5">
+        <path fill="#90A4AE" d="M529,463 H571 A2,2 0 0 1 573,465 V468 A2,2 0 0 1 571,470 H529 A2,2 0 0 1 527,468 V465 A2,2 0 0 1 529,463 Z" />
+        <text x="550" y="456" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="14" font-weight="bold" fill="#5B6B7B" text-anchor="middle">0.4</text>
+        <text x="550" y="491" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="14" fill="#5B6B7B" text-anchor="middle">第五 IP</text>
+      </g>
+    </g>
+    
+    <g id="chart-legend">
+      <path fill="#1565C0" d="M97,514 H107 A2,2 0 0 1 109,516 V526 A2,2 0 0 1 107,528 H97 A2,2 0 0 1 95,526 V516 A2,2 0 0 1 97,514 Z" />
+      <text x="114" y="526" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="13" fill="#5B6B7B">即時訊息(IP1·IP2)</text>
+      <path fill="#00897B" d="M287,514 H297 A2,2 0 0 1 299,516 V526 A2,2 0 0 1 297,528 H287 A2,2 0 0 1 285,526 V516 A2,2 0 0 1 287,514 Z" />
+      <text x="304" y="526" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="13" fill="#5B6B7B">快照訊息(IP3)</text>
+      <path fill="#90A4AE" d="M447,514 H457 A2,2 0 0 1 459,516 V526 A2,2 0 0 1 457,528 H447 A2,2 0 0 1 445,526 V516 A2,2 0 0 1 447,514 Z" />
+      <text x="464" y="526" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="13" fill="#5B6B7B">其他(IP4·IP5)</text>
+    </g>
+  </g>
+
+  
+  <g id="escalation">
+    <path fill="#F7F9FC" stroke="#D9E1EC" stroke-width="1.5" d="M52,562 H194 A12,12 0 0 1 206,574 V640 A12,12 0 0 1 194,652 H52 A12,12 0 0 1 40,640 V574 A12,12 0 0 1 52,562 Z" />
+    <text x="58" y="592" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="13" fill="#5B6B7B">5 IP 合計</text>
+    <text x="58" y="632" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="28" font-weight="bold" fill="#1565C0">23.7<tspan font-size="14" font-weight="normal" fill="#5B6B7B"> Mbps</tspan></text>
+    <text x="210" y="620" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="26" fill="#90A4AE">→</text>
+    <path fill="#F7F9FC" stroke="#D9E1EC" stroke-width="1.5" d="M240,562 H382 A12,12 0 0 1 394,574 V640 A12,12 0 0 1 382,652 H240 A12,12 0 0 1 228,640 V574 A12,12 0 0 1 240,562 Z" />
+    <text x="246" y="592" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="13" fill="#5B6B7B">含 OTC 流量</text>
+    <text x="246" y="632" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="28" font-weight="bold" fill="#003366">≈30<tspan font-size="14" font-weight="normal" fill="#5B6B7B"> Mbps</tspan></text>
+    <text x="400" y="620" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="26" fill="#90A4AE">→</text>
+    <path fill="#C62828" fill-opacity="0.08" stroke="#C62828" stroke-width="1.5" d="M428,562 H588 A12,12 0 0 1 600,574 V640 A12,12 0 0 1 588,652 H428 A12,12 0 0 1 416,640 V574 A12,12 0 0 1 428,562 Z" />
+    
+  <g transform="translate(434.0, 576.0) scale(0.75)" fill="none" stroke="#C62828" stroke-width="2">
+    <path d="M12 9v4" />
+    <path d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 -2.87l-8.106 -13.536a1.914 1.914 0 0 0 -3.274 0" />
+    <path d="M12 16h.01" />
+  </g>
+    <text x="458" y="590" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="13" font-weight="bold" fill="#C62828">同收兩條線路</text>
+    <text x="434" y="632" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="26" font-weight="bold" fill="#C62828">&gt;50<tspan font-size="13" font-weight="normal"> Mbps · 超過上限</tspan></text>
+  </g>
+
+  
+  <g id="rec-header">
+    <path fill="#1565C0" d="M652,118 H653 A2,2 0 0 1 655,120 V138 A2,2 0 0 1 653,140 H652 A2,2 0 0 1 650,138 V120 A2,2 0 0 1 652,118 Z" />
+    <text x="666" y="137" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="24" font-weight="bold" fill="#003366">改善建議｜頻寬不足因應</text>
+  </g>
+
+  <g id="rec-1">
+    <path fill="#F7F9FC" stroke="#D9E1EC" stroke-width="1.5" d="M662,156 H1228 A12,12 0 0 1 1240,168 V276 A12,12 0 0 1 1228,288 H662 A12,12 0 0 1 650,276 V168 A12,12 0 0 1 662,156 Z" />
+    <circle cx="690" cy="196" r="21" fill="#1565C0" />
+    <text x="690" y="204" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="22" font-weight="bold" fill="#FFFFFF" text-anchor="middle">1</text>
+    
+  <g transform="translate(730.0, 180.0) scale(0.9166666666666666)" fill="none" stroke="#1565C0" stroke-width="2">
+    <path d="M21 17h-8l-3.5 -5h-6.5" />
+    <path d="M21 7h-8l-3.495 5" />
+    <path d="M18 10l3 -3l-3 -3" />
+    <path d="M18 20l3 -3l-3 -3" />
+  </g>
+    <text x="762" y="198" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="19" font-weight="bold" fill="#003366">即時／快照　擇一接收</text>
+    <text x="730" y="234" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="15" fill="#1F2937">第一·第二 IP 為「<tspan font-weight="bold" fill="#1565C0">即時訊息</tspan>」,第三 IP 為「<tspan font-weight="bold" fill="#00897B">快照訊息</tspan>」。</text>
+    <text x="730" y="262" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="15" fill="#1F2937">資訊商應依自身線路頻寬與需求,擇一接收。</text>
+  </g>
+
+  <g id="rec-2">
+    <path fill="#F7F9FC" stroke="#D9E1EC" stroke-width="1.5" d="M662,308 H1228 A12,12 0 0 1 1240,320 V428 A12,12 0 0 1 1228,440 H662 A12,12 0 0 1 650,428 V320 A12,12 0 0 1 662,308 Z" />
+    <circle cx="690" cy="348" r="21" fill="#1565C0" />
+    <text x="690" y="356" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="22" font-weight="bold" fill="#FFFFFF" text-anchor="middle">2</text>
+    
+  <g transform="translate(730.0, 332.0) scale(0.9166666666666666)" fill="none" stroke="#1565C0" stroke-width="2">
+    <path d="M3 19a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+    <path d="M19 7a2 2 0 1 0 0 -4a2 2 0 0 0 0 4" />
+    <path d="M11 19h5.5a3.5 3.5 0 0 0 0 -7h-8a3.5 3.5 0 0 1 0 -7h4.5" />
+  </g>
+    <text x="762" y="350" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="19" font-weight="bold" fill="#003366">依業務需求分流接收</text>
+    <text x="730" y="386" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="15" fill="#1F2937">依業務需求<tspan font-weight="bold" fill="#1565C0">分流接收</tspan>,</text>
+    <text x="730" y="414" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="15" fill="#1F2937">或僅接收<tspan font-weight="bold" fill="#1565C0">一份</tspan>行情資訊,降低線路負載。</text>
+  </g>
+
+  <g id="rec-3">
+    <path fill="#F7F9FC" stroke="#D9E1EC" stroke-width="1.5" d="M662,460 H1228 A12,12 0 0 1 1240,472 V580 A12,12 0 0 1 1228,592 H662 A12,12 0 0 1 650,580 V472 A12,12 0 0 1 662,460 Z" />
+    <circle cx="690" cy="500" r="21" fill="#2E7D32" />
+    <text x="690" y="508" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="22" font-weight="bold" fill="#FFFFFF" text-anchor="middle">3</text>
+    
+  <g transform="translate(730.0, 484.0) scale(0.9166666666666666)" fill="none" stroke="#2E7D32" stroke-width="2">
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+    <path d="M13.41 10.59l2.59 -2.59" />
+    <path d="M7 12a5 5 0 0 1 5 -5" />
+  </g>
+    <text x="762" y="502" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="19" font-weight="bold" fill="#003366">提升硬體線路頻寬</text>
+    <text x="730" y="538" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="15" fill="#1F2937">電作部已於去年 <tspan font-weight="bold" fill="#003366">12 月底發文</tspan>,</text>
+    <text x="730" y="566" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="15" fill="#1F2937">全市場可申請 <tspan font-weight="bold" fill="#2E7D32">70M／100M</tspan> 線路升速。</text>
+  </g>
+
+  <g id="link-cta">
+    <path fill="#1565C0" fill-opacity="0.08" stroke="#1565C0" stroke-width="1.2" d="M660,606 H1230 A10,10 0 0 1 1240,616 V642 A10,10 0 0 1 1230,652 H660 A10,10 0 0 1 650,642 V616 A10,10 0 0 1 660,606 Z" />
+    
+  <g transform="translate(666.0, 620.0) scale(0.8333333333333334)" fill="none" stroke="#1565C0" stroke-width="2">
+    <path d="M12 6h-6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-6" />
+    <path d="M11 13l9 -9" />
+    <path d="M15 4h5v5" />
+  </g>
+    <text x="696" y="634" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="12" fill="#1565C0">申請參考:dsp.twse.com.tw/official/showDetail/04BFB3A4DBC211F0AC832D9568472C08</text>
+  </g>
+
+  
+  <g id="footer">
+    <text x="40" y="688" font-family="&quot;Microsoft YaHei&quot;, Arial, sans-serif" font-size="11" fill="#90A4AE">資料來源:臺灣證券交易所 行情傳輸統計(2026/6/25 09:05 尖峰)　·　OTC 為櫃買中心行情</text>
+  </g>
+</svg>
