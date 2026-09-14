@@ -23,6 +23,20 @@ git clone <this-repo> ~/projects/claude-skills
 cp -R ~/projects/claude-skills/.claude/skills/. ~/.claude/skills/
 ```
 
+## 雙向同步腳本
+
+repo 假設本機 clone 在 `~/projects/claude-skills`。
+
+| 腳本 | 方向 | 用途 |
+|---|---|---|
+| `sync.sh` | 本機 `~/.claude/skills/` → repo → GitHub | 把本機修改推上雲端(鏡像同步，含刪除) |
+| `pull.sh` | GitHub → repo → 本機 `~/.claude/skills/` | 把雲端最新版拉回本機(鏡像同步，含刪除) |
+
+`pull.sh` 執行前會先確認 repo 沒有未推送的變動(避免弄丟),覆蓋本機前也會先備份一份到
+`~/.claude/skills-backups/`，以防尚未跑過 `sync.sh` 的本機修改被覆蓋掉。
+
+多台電腦協作時的建議流程：**改完 skill → 跑 `sync.sh` 推上去 → 換到別台電腦先跑 `pull.sh` 拉下來，再繼續改**。同一時間只在一台電腦上改動,避免雙邊都有未同步的修改互相覆蓋。
+
 ## 在 web 上使用
 
 在 claude.ai/code 開啟需要這些 skill 的 repo，並確保該 repo 的 `.claude/skills/` 內含這些 skill（直接複製或用 submodule）。

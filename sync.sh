@@ -1,6 +1,6 @@
 #!/bin/bash
-# 自動把 ~/.claude/skills 同步到本 repo 並推上 GitHub。
-# 無變動時不做任何 commit/push（安靜結束）。
+# [推上雲端] 自動把 ~/.claude/skills 同步到本 repo 並推上 GitHub。
+# 無變動時不做任何 commit/push（安靜結束）。反方向（拉回本機）見 pull.sh。
 set -euo pipefail
 
 SRC="$HOME/.claude/skills/"
