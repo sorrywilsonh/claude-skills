@@ -16,6 +16,15 @@
 └── <skill-name>/SKILL.md   # 每個 skill 一個資料夾
 ```
 
+## 外部來源 Skill
+
+| Skill | 來源 | 說明 |
+|---|---|---|
+| `grill-me` | [mattpocock/skills](https://github.com/mattpocock/skills/tree/3cca18b368ae95cdbdebbff572ccafa662551015/skills/productivity/grill-me)(MIT) | 手動觸發(`disable-model-invocation`),呼叫 `grilling` 執行實際邏輯 |
+| `grilling` | [mattpocock/skills](https://github.com/mattpocock/skills/tree/3cca18b368ae95cdbdebbff572ccafa662551015/skills/productivity/grilling)(MIT) | `grill-me` 依賴的實際 skill:針對計畫/決策連續追問,逐輪列出問題與建議答案 |
+
+`grill-me` 只是個轉發用的別名,兩個資料夾要一起存在才能用。各自資料夾內含來源的 MIT LICENSE。
+
 ## 在新電腦還原到全域（讓本機 CLI 全專案都能用）
 
 ```bash
