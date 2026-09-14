@@ -27,8 +27,6 @@
 
 `grill-me` 只是個轉發用的別名,兩個資料夾要一起存在才能用。以上每個外部 skill 的資料夾裡都放了來源的 MIT LICENSE。
 
-> **`docx` 這個 skill 待確認:** 它的 `LICENSE.txt` 標明是 Anthropic 的專有內容(© 2025 Anthropic, PBC),條款明確寫「使用者不得從 Services 抽取這些素材或在 Services 之外保留副本、不得複製」。目前這份內容被放進這個 GitHub repo,看起來跟它自己的授權條款衝突——建議確認這份內容實際是怎麼取得的,不確定的話應該移除,不要放在版控的 repo 裡。
-
 ## 在新電腦還原到全域（讓本機 CLI 全專案都能用）
 
 ```bash
