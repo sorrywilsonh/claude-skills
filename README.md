@@ -22,8 +22,12 @@
 |---|---|---|
 | `grill-me` | [mattpocock/skills](https://github.com/mattpocock/skills/tree/3cca18b368ae95cdbdebbff572ccafa662551015/skills/productivity/grill-me)(MIT) | 手動觸發(`disable-model-invocation`),呼叫 `grilling` 執行實際邏輯 |
 | `grilling` | [mattpocock/skills](https://github.com/mattpocock/skills/tree/3cca18b368ae95cdbdebbff572ccafa662551015/skills/productivity/grilling)(MIT) | `grill-me` 依賴的實際 skill:針對計畫/決策連續追問,逐輪列出問題與建議答案 |
+| `brainstorming`、`dispatching-parallel-agents`、`executing-plans`、`finishing-a-development-branch`、`receiving-code-review`、`requesting-code-review`、`subagent-driven-development`、`systematic-debugging`、`test-driven-development`、`using-git-worktrees`、`using-superpowers`、`verification-before-completion`、`writing-plans`、`writing-skills` | [obra/superpowers](https://github.com/obra/superpowers)(MIT,Jesse Vincent) | 語言無關的工程紀律 skill 包。這裡存的是早期匯入時的快照,上游持續在更新,沒有自動同步 |
+| `ppt-master` | [hugohe3/ppt-master](https://github.com/hugohe3/ppt-master)(MIT,Hugo He) | AI 簡報產生工具。這裡存的是舊版快照(SVG 多角色協作流程),上游已經演進到 v6.4.0、改成不同的架構(Brand/Style/Layout/Deck workspace),沒有自動同步 |
 
-`grill-me` 只是個轉發用的別名,兩個資料夾要一起存在才能用。各自資料夾內含來源的 MIT LICENSE。
+`grill-me` 只是個轉發用的別名,兩個資料夾要一起存在才能用。以上每個外部 skill 的資料夾裡都放了來源的 MIT LICENSE。
+
+> **`docx` 這個 skill 待確認:** 它的 `LICENSE.txt` 標明是 Anthropic 的專有內容(© 2025 Anthropic, PBC),條款明確寫「使用者不得從 Services 抽取這些素材或在 Services 之外保留副本、不得複製」。目前這份內容被放進這個 GitHub repo,看起來跟它自己的授權條款衝突——建議確認這份內容實際是怎麼取得的,不確定的話應該移除,不要放在版控的 repo 裡。
 
 ## 在新電腦還原到全域（讓本機 CLI 全專案都能用）
 
