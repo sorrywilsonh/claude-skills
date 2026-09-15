@@ -20,6 +20,16 @@ from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any
 
+_SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from console_encoding import configure_utf8_stdio  # noqa: E402
+from _batch import run_path_batch  # noqa: E402
+from _conversion_profile import write_conversion_profile_best_effort  # noqa: E402
+
+configure_utf8_stdio()
+
 
 # ─────────────────────────────────────────────────────────────
 # Format registry
@@ -69,7 +79,9 @@ def _format_cell_value(value: Any) -> str:
     if isinstance(value, time):
         return value.isoformat(timespec="seconds")
     if isinstance(value, float):
-        return _markdown_escape(f"{value:g}")
+        # Excel shows 15 significant digits; that keeps 1234567.89 exact while
+        # 0.1 + 0.2 reads as 0.3 rather than its binary expansion.
+        return _markdown_escape(repr(float(f"{value:.15g}")).removesuffix(".0"))
     return _markdown_escape(str(value))
 
 
@@ -181,6 +193,43 @@ def _extract_rows(
     return normalized_rows, rows_truncated, cols_truncated
 
 
+def _is_caption_row(
+    row: list[Any],
+    row_index: int,
+    min_col: int,
+    merged_values: dict[tuple[int, int], Any],
+) -> bool:
+    """Return whether a leading row is a sheet title or source note, not a header.
+
+    Public datasets (World Bank, OECD, Eurostat exports) put a free-text
+    source line above the real header; it fills only the first cell or one
+    merged band, so every other column is empty or repeats the same value.
+    """
+    values = [value for value in row if not _is_empty(value)]
+    if len(values) != 1 and len({str(value) for value in values}) != 1:
+        return False
+    if len(values) == 1:
+        return len(row) > 1
+    return (row_index, min_col) in merged_values
+
+
+def _split_caption_rows(
+    rows: list[list[Any]],
+    min_row: int,
+    min_col: int,
+    merged_values: dict[tuple[int, int], Any],
+) -> tuple[list[str], list[list[Any]]]:
+    """Peel title/source rows off the top so the first table row is the header."""
+    captions: list[str] = []
+    while len(rows) > 1 and _is_caption_row(rows[0], min_row + len(captions), min_col, merged_values):
+        remaining = rows[1:]
+        if not any(len([v for v in row if not _is_empty(v)]) >= 2 for row in remaining):
+            break
+        captions.append(_format_cell_value(next(value for value in rows[0] if not _is_empty(value))))
+        rows = remaining
+    return captions, rows
+
+
 def _column_alignments(rows: list[list[Any]]) -> list[str]:
     if not rows:
         return []
@@ -279,6 +328,10 @@ def _convert_excel(input_file: Path, out_file: Path, max_rows: int, max_cols: in
             "",
         ])
 
+        captions, rows = _split_caption_rows(rows, min_row, min_col, merged_values)
+        for caption in captions:
+            lines.extend([f"> {caption}", ""])
+
         if rows_truncated or cols_truncated:
             limit_notes = []
             if rows_truncated:
@@ -329,16 +382,28 @@ def convert_to_markdown(
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"[INFO] Converting Excel workbook: {input_file.name}")
-    return _convert_excel(input_file, out_file, max_rows=max_rows, max_cols=max_cols)
+    markdown = _convert_excel(input_file, out_file, max_rows=max_rows, max_cols=max_cols)
+    if markdown:
+        profile_path = write_conversion_profile_best_effort(
+            input_path=str(input_file),
+            markdown_path=out_file,
+            converter="excel_to_md.py",
+            conversion_type=suffix.lstrip("."),
+        )
+        if profile_path:
+            print(f"   Wrote conversion profile -> {profile_path}")
+    return markdown
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Convert Excel workbooks to Markdown",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   python excel_to_md.py report.xlsx
+  python excel_to_md.py report.xlsx budget.xlsm
+  python excel_to_md.py ./workbooks -o ./markdown
   python excel_to_md.py report.xlsx -o output.md
   python excel_to_md.py report.xlsm --max-rows 200 --max-cols 40
 
@@ -349,8 +414,12 @@ Unsupported by default:
   .xls   Resave as .xlsx first
         """,
     )
-    parser.add_argument("input", help="Input Excel workbook")
-    parser.add_argument("-o", "--output", help="Output Markdown file path")
+    parser.add_argument("inputs", nargs="+", help="Input Excel workbook(s) or directories")
+    parser.add_argument(
+        "-o",
+        "--output",
+        help="Output Markdown file for one input, or output directory for multiple inputs/directories",
+    )
     parser.add_argument(
         "--max-rows",
         type=int,
@@ -365,14 +434,20 @@ Unsupported by default:
     )
     args = parser.parse_args()
 
-    result = convert_to_markdown(
-        args.input,
+    return run_path_batch(
+        args.inputs,
+        EXCEL_FORMATS | LEGACY_EXCEL_FORMATS,
         args.output,
-        max_rows=args.max_rows,
-        max_cols=args.max_cols,
+        lambda source, output: bool(
+            convert_to_markdown(
+                str(source),
+                str(output),
+                max_rows=args.max_rows,
+                max_cols=args.max_cols,
+            )
+        ),
     )
-    sys.exit(0 if result else 1)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
