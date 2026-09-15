@@ -41,10 +41,15 @@ repo 假設本機 clone 在 `~/projects/claude-skills`。
 | 腳本 | 方向 | 用途 |
 |---|---|---|
 | `sync.sh` | 本機 `~/.claude/skills/` → repo → GitHub | 把本機修改推上雲端(鏡像同步，含刪除) |
-| `pull.sh` | GitHub → repo → 本機 `~/.claude/skills/` | 把雲端最新版拉回本機(鏡像同步，含刪除) |
+| `pull.sh` | GitHub → repo → 本機 `~/.claude/skills/` | 把雲端最新版拉回本機(鏡像同步，含刪除),並在有 skill 的 `requirements.txt` 變動時自動 `pip install` |
 
 `pull.sh` 執行前會先確認 repo 沒有未推送的變動(避免弄丟),覆蓋本機前也會先備份一份到
 `~/.claude/skills-backups/`，以防尚未跑過 `sync.sh` 的本機修改被覆蓋掉。
+
+**依賴自動同步**:少數 skill(例如 `ppt-master`)帶有會實際執行的 Python 腳本,依賴列在該 skill 的
+`requirements.txt`。`pull.sh` 會比對這次 pull 前後的 commit,只要有任何 skill 的 `requirements.txt`
+被更動,就自動用 `python3 -m pip install -r` 幫你裝好;沒變動則跳過。所以**平常更新只要跑 `pull.sh` 一條**
+即可,不必自己記得裝依賴。前提:本機 `python3` 需為 skill 要求的版本(ppt-master v6.4.0 需 Python 3.10+)。
 
 多台電腦協作時的建議流程：**改完 skill → 跑 `sync.sh` 推上去 → 換到別台電腦先跑 `pull.sh` 拉下來，再繼續改**。同一時間只在一台電腦上改動,避免雙邊都有未同步的修改互相覆蓋。
 
