@@ -1,6 +1,6 @@
 """DrawingML <p:txBody> -> SVG <text> conversion.
 
-Reverse of svg_to_pptx/drawingml_elements.convert_text.
+Reverse of svg_to_pptx/drawingml/elements.py convert_text.
 
 Strategy (v1):
 - Each <a:p> paragraph emits one <text> element (one line of baseline).
@@ -17,18 +17,24 @@ Strategy (v1):
   so the visual lands without relying on PowerPoint list semantics.
 
 Color / font / size attributes propagate from a:rPr; missing attributes fall
-back to the paragraph's endParaRPr or to spec-default values.
+back to paragraph/list defaults, endParaRPr, or spec-default values.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
+from unicodedata import east_asian_width
 from xml.etree import ElementTree as ET
+
+from svg_to_pptx.drawingml.utils import detect_text_lang, is_cjk_char
 
 from .color_resolver import ColorPalette, find_color_elem, resolve_color
 from .emu_units import (
-    NS, Xfrm, fmt_num, emu_to_px, hundredths_pt_to_px,
+    NS, Xfrm, fmt_num, emu_to_px, format_ooxml_alpha,
+    hundredths_pt_to_px,
 )
+from .fill_to_svg import resolve_fill
 
 
 # ---------------------------------------------------------------------------
@@ -53,12 +59,24 @@ class TextRun:
     font_family: str  # full font-family stack (latin, ea fallback joined)
     fill: str
     fill_opacity: float = 1.0
+    defs: list[str] = field(default_factory=list)
     bold: bool = False
     italic: bool = False
     underline: bool = False
     strikethrough: bool = False
     letter_spacing_px: float = 0.0
     is_break: bool = False  # marks an a:br within a paragraph
+    hyperlink_href: str | None = None
+    formula_latex: str | None = None
+
+
+HyperlinkResolver = Callable[[str, str], str | None]
+InlineFormulaResolver = Callable[[ET.Element], tuple[str | None, str]]
+TextDiagnosticSink = Callable[[str, str, str], None]
+
+
+class TextImportError(ValueError):
+    """Report malformed DrawingML text in strict import mode."""
 
 
 @dataclass
@@ -73,7 +91,10 @@ class TextParagraph:
     line_height_ratio: float = DEFAULT_LINE_HEIGHT_RATIO
     space_before_px: float = 0.0
     space_after_px: float = 0.0
+    empty_line_font_size_px: float = DEFAULT_FONT_SIZE_PX
     bullet_prefix: str = ""  # rendered prefix like '• ' or '1. '
+    bullet_fill: str | None = None
+    bullet_fill_opacity: float = 1.0
 
 
 @dataclass
@@ -81,11 +102,12 @@ class TextResult:
     """Resolved text body ready for SVG emission.
 
     `svg` is one or more <text> elements, already absolutely positioned
-    inside the slide coordinate system. `defs` is empty for now.
+    inside the slide coordinate system. `defs` holds text gradient fills.
     """
 
     svg: str = ""
     defs: list[str] = field(default_factory=list)
+    contains_inline_formula: bool = False
 
 
 VERTICAL_TEXT_MODES = {"eaVert", "vert", "wordArtVert", "wordArtVertRtl"}
@@ -101,7 +123,17 @@ def convert_txbody(
     palette: ColorPalette | None,
     *,
     theme_fonts: dict[str, str] | None = None,
+    slide_number: int | None = None,
     default_fill: str = DEFAULT_FILL_HEX,
+    default_font_size_px: float = DEFAULT_FONT_SIZE_PX,
+    fallback_lst_styles: tuple[ET.Element, ...] = (),
+    fallback_run_props: tuple[ET.Element, ...] = (),
+    id_prefix: str = "txt",
+    id_seq: list[int] | None = None,
+    hyperlink_resolver: HyperlinkResolver | None = None,
+    inline_formula_resolver: InlineFormulaResolver | None = None,
+    strict: bool = False,
+    diagnostic_sink: TextDiagnosticSink | None = None,
 ) -> TextResult:
     """Convert <p:txBody> under the given shape geometry to SVG <text>(s)."""
     if tx_body is None:
@@ -110,6 +142,14 @@ def convert_txbody(
     body_pr = tx_body.find("a:bodyPr", NS)
     paragraphs = _parse_paragraphs(
         tx_body, palette, theme_fonts or {}, default_fill=default_fill,
+        default_font_size_px=default_font_size_px,
+        fallback_lst_styles=fallback_lst_styles,
+        fallback_run_props=fallback_run_props,
+        slide_number=slide_number, id_prefix=id_prefix, id_seq=id_seq,
+        hyperlink_resolver=hyperlink_resolver,
+        inline_formula_resolver=inline_formula_resolver,
+        strict=strict,
+        diagnostic_sink=diagnostic_sink,
     )
     if not paragraphs or not _has_visible_text(paragraphs):
         return TextResult()
@@ -121,6 +161,10 @@ def convert_txbody(
     bins = _read_emu_attr(body_pr, "bIns", DEFAULT_INSETS_EMU["b"])
     anchor = body_pr.attrib.get("anchor", "t") if body_pr is not None else "t"
     wrap_mode = body_pr.attrib.get("wrap", "square") if body_pr is not None else "square"
+    respect_edge_spacing = (
+        body_pr is not None
+        and body_pr.attrib.get("spcFirstLastPara") in {"1", "true"}
+    )
 
     inner_x = xfrm.x + lins
     inner_y = xfrm.y + tins
@@ -138,7 +182,19 @@ def convert_txbody(
         _paragraph_height_from_lines(p, lines)
         for p, lines in zip(paragraphs, para_lines)
     ]
-    total_h = sum(para_heights)
+    space_before = [paragraph.space_before_px for paragraph in paragraphs]
+    space_after = [paragraph.space_after_px for paragraph in paragraphs]
+    if not respect_edge_spacing:
+        space_before[0] = 0.0
+        space_after[-1] = 0.0
+    total_h = sum(
+        before + height + after
+        for before, height, after in zip(
+            space_before,
+            para_heights,
+            space_after,
+        )
+    )
     if anchor == "ctr":
         cursor_y = inner_y + max(0.0, (inner_h - total_h) / 2.0)
     elif anchor == "b":
@@ -148,18 +204,29 @@ def convert_txbody(
 
     bottom_y = inner_y + inner_h
     text_blocks: list[str] = []
-    for para, lines, height in zip(paragraphs, para_lines, para_heights):
-        cursor_y += para.space_before_px
+    for para, lines, height, before, after in zip(
+        paragraphs,
+        para_lines,
+        para_heights,
+        space_before,
+        space_after,
+    ):
+        cursor_y += before
         visible_lines = _clip_lines_to_bottom(para, lines, cursor_y, bottom_y)
         if visible_lines:
             text_blocks.append(
                 _emit_paragraph(para, visible_lines, inner_x, inner_w, cursor_y)
             )
-        cursor_y += height + para.space_after_px
+        cursor_y += height + after
         if cursor_y >= bottom_y:
             break
 
-    return TextResult(svg="\n".join(text_blocks))
+    svg = "\n".join(text_blocks)
+    return TextResult(
+        svg=svg,
+        defs=_collect_text_defs(paragraphs),
+        contains_inline_formula="data-pptx-inline-formula=" in svg,
+    )
 
 
 def is_vertical_txbody(tx_body: ET.Element | None, xfrm: Xfrm | None = None) -> bool:
@@ -179,7 +246,17 @@ def convert_vertical_txbody(
     palette: ColorPalette | None,
     *,
     theme_fonts: dict[str, str] | None = None,
+    slide_number: int | None = None,
     default_fill: str = DEFAULT_FILL_HEX,
+    default_font_size_px: float = DEFAULT_FONT_SIZE_PX,
+    fallback_lst_styles: tuple[ET.Element, ...] = (),
+    fallback_run_props: tuple[ET.Element, ...] = (),
+    id_prefix: str = "txt",
+    id_seq: list[int] | None = None,
+    hyperlink_resolver: HyperlinkResolver | None = None,
+    inline_formula_resolver: InlineFormulaResolver | None = None,
+    strict: bool = False,
+    diagnostic_sink: TextDiagnosticSink | None = None,
 ) -> TextResult:
     """Render East Asian vertical text as upright stacked glyphs.
 
@@ -191,9 +268,25 @@ def convert_vertical_txbody(
     if tx_body is None:
         return TextResult()
 
+    body_pr = tx_body.find("a:bodyPr", NS)
     paragraphs = _parse_paragraphs(
         tx_body, palette, theme_fonts or {}, default_fill=default_fill,
+        default_font_size_px=default_font_size_px,
+        fallback_lst_styles=fallback_lst_styles,
+        fallback_run_props=fallback_run_props,
+        slide_number=slide_number, id_prefix=id_prefix, id_seq=id_seq,
+        hyperlink_resolver=hyperlink_resolver,
+        inline_formula_resolver=inline_formula_resolver,
+        strict=strict,
+        diagnostic_sink=diagnostic_sink,
     )
+    if body_pr is not None and body_pr.attrib.get("vert") == "eaVert":
+        return _convert_east_asian_vertical(
+            paragraphs,
+            xfrm,
+            body_pr,
+        )
+
     runs = [
         run
         for para in paragraphs
@@ -209,11 +302,7 @@ def convert_vertical_txbody(
     glyphs: list[tuple[str, TextRun]] = []
     for run in runs:
         for char in run.text:
-            if char in "\r\n":
-                continue
-            if char == " ":
-                continue
-            glyphs.append((char, run))
+            glyphs.append((" " if char in "\t\r\n" else char, run))
 
     if not glyphs:
         return TextResult()
@@ -236,12 +325,15 @@ def convert_vertical_txbody(
         if first_run is None:
             first_run = run
             first_baseline = baseline_y
-            spans.append(f"<tspan{tspan_attrs}>{_xml_escape(char)}</tspan>")
+            run_span = f"<tspan{tspan_attrs}>{_xml_escape(char)}</tspan>"
+            spans.append(_wrap_run_hyperlink(run_span, run))
         else:
             dy = baseline_y - (previous_baseline or baseline_y)
+            run_span = f"<tspan{tspan_attrs}>{_xml_escape(char)}</tspan>"
+            linked_span = _wrap_run_hyperlink(run_span, run)
             spans.append(
-                f'<tspan x="{fmt_num(center_x)}" dy="{fmt_num(dy)}"'
-                f"{tspan_attrs}>{_xml_escape(char)}</tspan>"
+                f'<tspan x="{fmt_num(center_x)}" dy="{fmt_num(dy)}">'
+                f"{linked_span}</tspan>"
             )
         previous_baseline = baseline_y
         cursor_y += advance
@@ -250,7 +342,188 @@ def convert_vertical_txbody(
         return TextResult()
 
     attrs = _text_base_attrs(first_run, center_x, first_baseline, "middle")
-    return TextResult(svg=f"<text{attrs}>{''.join(spans)}</text>")
+    return TextResult(
+        svg=f"<text{attrs}>{''.join(spans)}</text>",
+        defs=_collect_text_defs(paragraphs),
+        contains_inline_formula=False,
+    )
+
+
+def _convert_east_asian_vertical(
+    paragraphs: list[TextParagraph],
+    xfrm: Xfrm,
+    body_pr: ET.Element,
+) -> TextResult:
+    """Render eaVert columns with upright CJK and sideways Latin runs."""
+    columns: list[list[tuple[bool, str, TextRun]]] = []
+    for paragraph in paragraphs:
+        column: list[tuple[bool, str, TextRun]] = []
+        for run in paragraph.runs:
+            if run.is_break:
+                if column:
+                    columns.append(column)
+                    column = []
+                continue
+            start = 0
+            while start < len(run.text):
+                upright = _is_east_asian_vertical_upright(run.text[start])
+                end = start + 1
+                while (
+                    end < len(run.text)
+                    and _is_east_asian_vertical_upright(run.text[end]) == upright
+                ):
+                    end += 1
+                column.append((upright, run.text[start:end], run))
+                start = end
+        if column:
+            columns.append(column)
+
+    if not columns:
+        return TextResult()
+
+    box_x, box_y, box_w, box_h = _rotated_bbox(xfrm)
+    lins = _read_emu_attr(body_pr, "lIns", DEFAULT_INSETS_EMU["l"])
+    tins = _read_emu_attr(body_pr, "tIns", DEFAULT_INSETS_EMU["t"])
+    rins = _read_emu_attr(body_pr, "rIns", DEFAULT_INSETS_EMU["r"])
+    bins = _read_emu_attr(body_pr, "bIns", DEFAULT_INSETS_EMU["b"])
+    inner_x = box_x + lins
+    inner_y = box_y + tins
+    inner_w = max(box_w - lins - rins, 1.0)
+    inner_h = max(box_h - tins - bins, 1.0)
+
+    column_widths = [
+        max(run.font_size_px * 1.05 for _upright, _text, run in column)
+        for column in columns
+    ]
+    total_width = sum(column_widths)
+    right_x = inner_x + min(inner_w, (inner_w + total_width) / 2.0)
+    column_centers: list[float] = []
+    for width in column_widths:
+        column_centers.append(right_x - width / 2.0)
+        right_x -= width
+
+    anchor = body_pr.attrib.get("anchor", "t")
+    bottom_y = inner_y + inner_h
+    text_blocks: list[str] = []
+    for column, center_x in zip(columns, column_centers):
+        content_height = sum(
+            _east_asian_vertical_segment_height(upright, text, run)
+            for upright, text, run in column
+        )
+        if anchor == "ctr":
+            cursor_y = inner_y + max(0.0, (inner_h - content_height) / 2.0)
+        elif anchor == "b":
+            cursor_y = inner_y + max(0.0, inner_h - content_height)
+        else:
+            cursor_y = inner_y
+
+        for upright, text, run in column:
+            available = bottom_y - cursor_y
+            if available <= 0:
+                break
+            if upright:
+                advance = run.font_size_px * 1.05
+                visible_count = min(len(text), int(available // advance))
+                visible = text[:visible_count]
+                if not visible:
+                    break
+                text_blocks.append(
+                    _emit_upright_vertical_segment(
+                        visible,
+                        run,
+                        center_x,
+                        cursor_y,
+                        advance,
+                    )
+                )
+                cursor_y += advance * visible_count
+                if visible_count < len(text):
+                    break
+                continue
+
+            visible = _fit_sideways_vertical_text(text, run, available)
+            if not visible:
+                break
+            text_blocks.append(
+                _emit_sideways_vertical_segment(
+                    visible,
+                    run,
+                    center_x,
+                    cursor_y,
+                )
+            )
+            cursor_y += _estimate_run_width(visible, run)
+            if len(visible) < len(text):
+                break
+
+    return TextResult(
+        svg="\n".join(text_blocks),
+        defs=_collect_text_defs(paragraphs),
+        contains_inline_formula=False,
+    )
+
+
+def _is_east_asian_vertical_upright(char: str) -> bool:
+    """Keep East Asian wide/full-width glyphs upright in eaVert text."""
+    return _is_cjk(char) or east_asian_width(char) in {"W", "F"}
+
+
+def _east_asian_vertical_segment_height(
+    upright: bool,
+    text: str,
+    run: TextRun,
+) -> float:
+    if upright:
+        return len(text) * run.font_size_px * 1.05
+    return _estimate_run_width(text, run)
+
+
+def _fit_sideways_vertical_text(
+    text: str,
+    run: TextRun,
+    available: float,
+) -> str:
+    end = 0
+    for index in range(1, len(text) + 1):
+        if _estimate_run_width(text[:index], run) > available:
+            break
+        end = index
+    return text[:end]
+
+
+def _emit_upright_vertical_segment(
+    text: str,
+    run: TextRun,
+    center_x: float,
+    top_y: float,
+    advance: float,
+) -> str:
+    first_baseline = top_y + run.font_size_px * 0.85
+    attrs = _text_base_attrs(run, center_x, first_baseline, "middle")
+    spans = [_xml_escape(text[0])]
+    for char in text[1:]:
+        spans.append(
+            f'<tspan x="{fmt_num(center_x)}" dy="{fmt_num(advance)}">'
+            f"{_xml_escape(char)}</tspan>"
+        )
+    markup = f"<text{attrs}>{''.join(spans)}</text>"
+    return _wrap_run_hyperlink(markup, run)
+
+
+def _emit_sideways_vertical_segment(
+    text: str,
+    run: TextRun,
+    center_x: float,
+    top_y: float,
+) -> str:
+    baseline_x = center_x - run.font_size_px * 0.3
+    start_y = top_y + run.font_size_px * 0.1
+    attrs = _text_base_attrs(run, baseline_x, start_y, "start")
+    transform = (
+        f' transform="rotate(90 {fmt_num(baseline_x)} {fmt_num(start_y)})"'
+    )
+    markup = f"<text{attrs}{transform}>{_xml_escape(text)}</text>"
+    return _wrap_run_hyperlink(markup, run)
 
 
 def _rotated_bbox(xfrm: Xfrm) -> tuple[float, float, float, float]:
@@ -321,15 +594,39 @@ def _parse_paragraphs(
     theme_fonts: dict[str, str],
     *,
     default_fill: str = DEFAULT_FILL_HEX,
+    default_font_size_px: float = DEFAULT_FONT_SIZE_PX,
+    fallback_lst_styles: tuple[ET.Element, ...] = (),
+    fallback_run_props: tuple[ET.Element, ...] = (),
+    slide_number: int | None = None,
+    id_prefix: str = "txt",
+    id_seq: list[int] | None = None,
+    hyperlink_resolver: HyperlinkResolver | None = None,
+    inline_formula_resolver: InlineFormulaResolver | None = None,
+    strict: bool = False,
+    diagnostic_sink: TextDiagnosticSink | None = None,
 ) -> list[TextParagraph]:
     """Walk <a:p> children producing TextParagraph objects."""
     paragraphs: list[TextParagraph] = []
     autonum_state: dict[int, int] = {}
+    lst_style = tx_body.find("a:lstStyle", NS)
+    lst_styles = (
+        (lst_style,) + fallback_lst_styles
+        if lst_style is not None else fallback_lst_styles
+    )
 
     for p_elem in tx_body.findall("a:p", NS):
         para = _parse_paragraph(
             p_elem, palette, theme_fonts, autonum_state,
+            lst_styles=lst_styles,
+            fallback_run_props=fallback_run_props,
             default_fill=default_fill,
+            default_font_size_px=default_font_size_px,
+            slide_number=slide_number,
+            id_prefix=id_prefix, id_seq=id_seq,
+            hyperlink_resolver=hyperlink_resolver,
+            inline_formula_resolver=inline_formula_resolver,
+            strict=strict,
+            diagnostic_sink=diagnostic_sink,
         )
         paragraphs.append(para)
 
@@ -342,51 +639,76 @@ def _parse_paragraph(
     theme_fonts: dict[str, str],
     autonum_state: dict[int, int],
     *,
+    lst_styles: tuple[ET.Element, ...] = (),
+    fallback_run_props: tuple[ET.Element, ...] = (),
     default_fill: str = DEFAULT_FILL_HEX,
+    default_font_size_px: float = DEFAULT_FONT_SIZE_PX,
+    slide_number: int | None = None,
+    id_prefix: str = "txt",
+    id_seq: list[int] | None = None,
+    hyperlink_resolver: HyperlinkResolver | None = None,
+    inline_formula_resolver: InlineFormulaResolver | None = None,
+    strict: bool = False,
+    diagnostic_sink: TextDiagnosticSink | None = None,
 ) -> TextParagraph:
     para = TextParagraph()
 
     p_pr = p_elem.find("a:pPr", NS)
     if p_pr is not None:
-        para.align = p_pr.attrib.get("algn", "l")
         try:
             para.level = int(p_pr.attrib.get("lvl", "0"))
         except ValueError:
             para.level = 0
-        try:
-            para.margin_left_px = emu_to_px(int(p_pr.attrib.get("marL", "0")))
-        except ValueError:
-            para.margin_left_px = 0.0
-        try:
-            para.indent_px = emu_to_px(int(p_pr.attrib.get("indent", "0")))
-        except ValueError:
-            para.indent_px = 0.0
-        ln_spc = p_pr.find("a:lnSpc", NS)
-        if ln_spc is not None:
-            spc_pct = ln_spc.find("a:spcPct", NS)
-            if spc_pct is not None:
-                try:
-                    para.line_height_ratio = float(spc_pct.attrib.get("val", "100000")) / 100000.0
-                except ValueError:
-                    pass
-        spc_bef = p_pr.find("a:spcBef/a:spcPts", NS)
-        if spc_bef is not None:
-            try:
-                para.space_before_px = hundredths_pt_to_px(int(spc_bef.attrib.get("val", "0")))
-            except ValueError:
-                pass
-        spc_aft = p_pr.find("a:spcAft/a:spcPts", NS)
-        if spc_aft is not None:
-            try:
-                para.space_after_px = hundredths_pt_to_px(int(spc_aft.attrib.get("val", "0")))
-            except ValueError:
-                pass
 
-        # Bullet / basic auto-numbering
-        para.bullet_prefix = _resolve_bullet_prefix(p_pr, para.level, autonum_state)
+    para_style_chain = (p_pr,) + _lst_style_level_prs(lst_styles, para.level)
+    para.align = _attr_chain(para_style_chain, "algn") or "l"
+    para.margin_left_px = _emu_px_attr_chain(para_style_chain, "marL", 0.0)
+    para.indent_px = _emu_px_attr_chain(para_style_chain, "indent", 0.0)
+    para.line_height_ratio = _line_height_ratio(para_style_chain)
+    para.space_before_px = _spacing_points_px(para_style_chain, "a:spcBef/a:spcPts")
+    para.space_after_px = _spacing_points_px(para_style_chain, "a:spcAft/a:spcPts")
+    para.bullet_prefix = _resolve_bullet_prefix(
+        para_style_chain, para.level, autonum_state,
+    )
+    para.bullet_fill, para.bullet_fill_opacity = _resolve_bullet_fill(
+        para_style_chain, palette,
+    )
 
     # Default endParaRPr style (applies if a run has no rPr)
     end_rpr = p_elem.find("a:endParaRPr", NS)
+    # defRPr from pPr and txBody/lstStyle, both optional.
+    def_rpr = p_pr.find("a:defRPr", NS) if p_pr is not None else None
+    list_def_rpr = _child_chain(para_style_chain[1:], "a:defRPr")
+    para.empty_line_font_size_px = _font_size_px(
+        (end_rpr, def_rpr, list_def_rpr) + fallback_run_props,
+        default_font_size_px,
+    )
+
+    def resolved_run(text: str, rpr: ET.Element | None) -> TextRun:
+        return _build_run(
+            text, rpr, end_rpr, palette, theme_fonts,
+            def_rpr=def_rpr,
+            list_def_rpr=list_def_rpr,
+            fallback_run_props=fallback_run_props,
+            default_fill=default_fill,
+            default_font_size_px=default_font_size_px,
+            id_prefix=id_prefix, id_seq=id_seq,
+            hyperlink_resolver=hyperlink_resolver,
+            strict=strict,
+            diagnostic_sink=diagnostic_sink,
+        )
+
+    def append_resolved_text(text: str, rpr: ET.Element | None) -> None:
+        """Preserve literal newlines inside a:t as explicit DrawingML breaks."""
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        segments = normalized.split("\n")
+        for index, segment in enumerate(segments):
+            if segment or len(segments) == 1:
+                para.runs.append(resolved_run(segment, rpr))
+            if index < len(segments) - 1:
+                line_break = resolved_run("", rpr)
+                line_break.is_break = True
+                para.runs.append(line_break)
 
     for child in list(p_elem):
         if not isinstance(child.tag, str):
@@ -396,30 +718,59 @@ def _parse_paragraph(
             rpr = child.find("a:rPr", NS)
             text_elem = child.find("a:t", NS)
             text = text_elem.text or "" if text_elem is not None else ""
-            run = _build_run(
-                text, rpr, end_rpr, palette, theme_fonts,
-                default_fill=default_fill,
-            )
-            para.runs.append(run)
+            append_resolved_text(text, rpr)
         elif local == "br":
+            break_rpr = child.find("a:rPr", NS)
             para.runs.append(TextRun(
-                text="", font_size_px=DEFAULT_FONT_SIZE_PX,
-                font_family="sans-serif", fill=default_fill,
+                text="",
+                font_size_px=_font_size_px(
+                    (break_rpr, def_rpr, list_def_rpr, end_rpr)
+                    + fallback_run_props,
+                    default_font_size_px,
+                ),
+                font_family="sans-serif",
+                fill=default_fill,
                 is_break=True,
             ))
         elif local == "fld":
-            # Field (datetime / slidenum). Use the literal a:t fallback.
+            # Slide SVGs have a concrete page context, so resolve slide-number
+            # fields there. Standalone master/layout renders keep the literal
+            # fallback because one shared part can serve many slide numbers.
             rpr = child.find("a:rPr", NS)
             text_elem = child.find("a:t", NS)
             text = text_elem.text or "" if text_elem is not None else ""
+            field_type = child.attrib.get("type", "").strip().lower()
+            if field_type == "slidenum" and slide_number is not None:
+                text = str(slide_number)
             if text:
-                run = _build_run(
-                    text, rpr, end_rpr, palette, theme_fonts,
-                    default_fill=default_fill,
+                append_resolved_text(text, rpr)
+        elif (
+            child.tag
+            == "{http://schemas.microsoft.com/office/drawing/2010/main}m"
+            and inline_formula_resolver is not None
+        ):
+            latex, preview = inline_formula_resolver(child)
+            if preview:
+                formula_rpr = next(
+                    child.iter(f"{{{NS['a']}}}rPr"),
+                    None,
                 )
+                run = resolved_run(preview, formula_rpr)
+                run.formula_latex = latex
                 para.runs.append(run)
 
     return para
+
+
+def _font_size_px(
+    sources: tuple[ET.Element | None, ...],
+    default_font_size_px: float,
+) -> float:
+    """Resolve one effective DrawingML run size into SVG pixels."""
+    return hundredths_pt_to_px(
+        _attr_chain(sources, "sz"),
+        default_font_size_px,
+    )
 
 
 def _build_run(
@@ -429,39 +780,73 @@ def _build_run(
     palette: ColorPalette | None,
     theme_fonts: dict[str, str],
     *,
+    def_rpr: ET.Element | None = None,
+    list_def_rpr: ET.Element | None = None,
+    fallback_run_props: tuple[ET.Element, ...] = (),
     default_fill: str = DEFAULT_FILL_HEX,
+    default_font_size_px: float = DEFAULT_FONT_SIZE_PX,
+    id_prefix: str = "txt",
+    id_seq: list[int] | None = None,
+    hyperlink_resolver: HyperlinkResolver | None = None,
+    strict: bool = False,
+    diagnostic_sink: TextDiagnosticSink | None = None,
 ) -> TextRun:
-    """Resolve a single <a:r> run from its rPr (with endParaRPr as default)."""
-    # font-size: rPr@sz; default 1800 (18pt = 24px)
-    sz = _attr_chain((rpr, end_rpr), "sz")
-    font_size_px = hundredths_pt_to_px(sz, DEFAULT_FONT_SIZE_PX)
-
+    """Resolve a single <a:r> run from its rPr and fallback run properties."""
+    style_chain = (
+        rpr, def_rpr, list_def_rpr, end_rpr,
+    ) + fallback_run_props
+    # font-size: rPr > pPr/defRPr > lstStyle/lvlNpPr/defRPr > endParaRPr > default
+    font_size_px = _font_size_px(style_chain, default_font_size_px)
     # Bold / italic
-    bold = _attr_chain((rpr, end_rpr), "b") == "1"
-    italic = _attr_chain((rpr, end_rpr), "i") == "1"
-
+    bold = _attr_chain(style_chain, "b") == "1"
+    italic = _attr_chain(style_chain, "i") == "1"
     # Underline / strike
-    u_val = _attr_chain((rpr, end_rpr), "u")
+    u_val = _attr_chain(style_chain, "u")
     underline = u_val not in (None, "", "none")
-    strike_val = _attr_chain((rpr, end_rpr), "strike")
+    strike_val = _attr_chain(style_chain, "strike")
     strikethrough = strike_val in ("sngStrike", "dblStrike")
 
     # Letter spacing (rPr@spc, in 1/100 pt)
-    spc = _attr_chain((rpr, end_rpr), "spc")
+    spc = _attr_chain(style_chain, "spc")
     letter_spacing_px = 0.0
     if spc is not None:
         try:
             letter_spacing_px = float(spc) / 100.0 * 4.0 / 3.0  # pt -> px
-        except ValueError:
-            pass
+        except ValueError as exc:
+            message = (
+                f"Invalid DrawingML a:rPr@spc value {spc!r}; expected a numeric "
+                "hundredths-of-a-point value"
+            )
+            if strict:
+                raise TextImportError(message) from exc
+            if diagnostic_sink is not None:
+                diagnostic_sink(
+                    "text-letter-spacing-normalized",
+                    message,
+                    "use zero letter spacing for this run",
+                )
 
     # Color
     fill = default_fill
     fill_opacity = 1.0
+    defs: list[str] = []
     color_source = None
-    for src in (rpr, end_rpr):
+    for src in style_chain:
         if src is None:
             continue
+        grad = src.find("a:gradFill", NS)
+        if grad is not None:
+            grad_fill = resolve_fill(
+                grad, palette,
+                id_prefix=id_prefix,
+                id_seq=id_seq,
+            )
+            if grad_fill.attrs.get("fill"):
+                fill = grad_fill.attrs["fill"]
+                fill_opacity = 1.0
+                defs.extend(grad_fill.defs)
+                color_source = None
+                break
         solid = src.find("a:solidFill", NS)
         if solid is not None:
             color_source = solid
@@ -474,16 +859,44 @@ def _build_run(
             fill_opacity = alpha
 
     # Font typeface
-    latin_face = _typeface(rpr, "latin") or _typeface(end_rpr, "latin")
-    ea_face = _typeface(rpr, "ea") or _typeface(end_rpr, "ea")
-    cs_face = _typeface(rpr, "cs") or _typeface(end_rpr, "cs")
+    latin_face = _typeface_chain(style_chain, "latin")
+    ea_face = _typeface_chain(style_chain, "ea")
+    cs_face = _typeface_chain(style_chain, "cs")
+    lang = _attr_chain(style_chain, "lang")
+    alt_lang = _attr_chain(style_chain, "altLang")
 
     # Resolve theme refs (e.g. typeface="+mn-lt" / "+mj-ea")
-    latin_face = _resolve_theme_typeface(latin_face, theme_fonts)
-    ea_face = _resolve_theme_typeface(ea_face, theme_fonts)
-    cs_face = _resolve_theme_typeface(cs_face, theme_fonts)
+    latin_face = _resolve_theme_typeface(
+        latin_face,
+        theme_fonts,
+        text=text,
+        lang=lang,
+        alt_lang=alt_lang,
+    )
+    ea_face = _resolve_theme_typeface(
+        ea_face,
+        theme_fonts,
+        text=text,
+        lang=lang,
+        alt_lang=alt_lang,
+    )
+    cs_face = _resolve_theme_typeface(
+        cs_face,
+        theme_fonts,
+        text=text,
+        lang=lang,
+        alt_lang=alt_lang,
+    )
 
     font_family = _build_font_stack(latin_face, ea_face, cs_face)
+    hyperlink_href: str | None = None
+    if rpr is not None and hyperlink_resolver is not None:
+        hyperlink = rpr.find("a:hlinkClick", NS)
+        if hyperlink is not None:
+            hyperlink_href = hyperlink_resolver(
+                hyperlink.attrib.get(f"{{{NS['r']}}}id", ""),
+                hyperlink.attrib.get("action", ""),
+            )
 
     return TextRun(
         text=text,
@@ -491,12 +904,81 @@ def _build_run(
         font_family=font_family,
         fill=fill,
         fill_opacity=fill_opacity,
+        defs=defs,
         bold=bold,
         italic=italic,
         underline=underline,
         strikethrough=strikethrough,
         letter_spacing_px=letter_spacing_px,
+        hyperlink_href=hyperlink_href,
     )
+
+
+def _lst_style_level_prs(
+    lst_styles: tuple[ET.Element, ...],
+    level: int,
+) -> tuple[ET.Element, ...]:
+    """Return txBody/lstStyle paragraph properties for a paragraph level."""
+    level_idx = min(max(level, 0), 8) + 1
+    level_prs: list[ET.Element] = []
+    for lst_style in lst_styles:
+        lvl_pr = lst_style.find(f"a:lvl{level_idx}pPr", NS)
+        if lvl_pr is not None:
+            level_prs.append(lvl_pr)
+    return tuple(level_prs)
+
+
+def _child_chain(
+    sources: tuple[ET.Element | None, ...],
+    path: str,
+) -> ET.Element | None:
+    for src in sources:
+        if src is None:
+            continue
+        child = src.find(path, NS)
+        if child is not None:
+            return child
+    return None
+
+
+def _emu_px_attr_chain(
+    sources: tuple[ET.Element | None, ...],
+    attr: str,
+    default: float,
+) -> float:
+    value = _attr_chain(sources, attr)
+    if value is None:
+        return default
+    try:
+        return emu_to_px(int(value))
+    except ValueError:
+        return default
+
+
+def _line_height_ratio(sources: tuple[ET.Element | None, ...]) -> float:
+    ln_spc = _child_chain(sources, "a:lnSpc")
+    if ln_spc is None:
+        return DEFAULT_LINE_HEIGHT_RATIO
+    spc_pct = ln_spc.find("a:spcPct", NS)
+    if spc_pct is None:
+        return DEFAULT_LINE_HEIGHT_RATIO
+    try:
+        return float(spc_pct.attrib.get("val", "100000")) / 100000.0
+    except ValueError:
+        return DEFAULT_LINE_HEIGHT_RATIO
+
+
+def _spacing_points_px(
+    sources: tuple[ET.Element | None, ...],
+    path: str,
+) -> float:
+    spacing = _child_chain(sources, path)
+    if spacing is None:
+        return 0.0
+    try:
+        return hundredths_pt_to_px(int(spacing.attrib.get("val", "0")))
+    except ValueError:
+        return 0.0
 
 
 def _attr_chain(sources: tuple[ET.Element | None, ...], attr: str) -> str | None:
@@ -520,8 +1002,74 @@ def _typeface(rpr: ET.Element | None, child_tag: str) -> str | None:
     return val or None
 
 
-def _resolve_theme_typeface(face: str | None, theme_fonts: dict[str, str]) -> str | None:
-    """Theme references look like '+mj-lt' (major latin) / '+mn-ea' (minor EA)."""
+def _typeface_chain(
+    sources: tuple[ET.Element | None, ...],
+    child_tag: str,
+) -> str | None:
+    for src in sources:
+        face = _typeface(src, child_tag)
+        if face:
+            return face
+    return None
+
+
+def _theme_script_from_lang(lang: str | None) -> str | None:
+    """Map a DrawingML language tag to one theme supplemental-script key."""
+    if not lang:
+        return None
+    normalized = lang.strip().replace("_", "-").lower()
+    if not normalized:
+        return None
+    parts = normalized.split("-")
+    primary = parts[0]
+    if primary == "ja":
+        return "Jpan"
+    if primary == "ko":
+        return "Hang"
+    if primary != "zh":
+        return None
+    if any(part in {"hant", "cht", "tw", "hk", "mo"} for part in parts[1:]):
+        return "Hant"
+    return "Hans"
+
+
+def _theme_script_from_text(text: str) -> str | None:
+    """Infer a CJK theme script from glyph ranges, defaulting plain Han to Hans."""
+    if any(
+        0x3100 <= ord(char) <= 0x312F
+        or 0x31A0 <= ord(char) <= 0x31BF
+        for char in text
+    ):
+        return "Hant"
+    return {
+        "ko-KR": "Hang",
+        "ja-JP": "Jpan",
+        "zh-CN": "Hans",
+    }.get(detect_text_lang(text))
+
+
+def _run_theme_script(
+    text: str,
+    lang: str | None,
+    alt_lang: str | None,
+) -> str | None:
+    """Resolve EA script from run language first, then alternate language/text."""
+    return (
+        _theme_script_from_lang(lang)
+        or _theme_script_from_lang(alt_lang)
+        or _theme_script_from_text(text)
+    )
+
+
+def _resolve_theme_typeface(
+    face: str | None,
+    theme_fonts: dict[str, str],
+    *,
+    text: str = "",
+    lang: str | None = None,
+    alt_lang: str | None = None,
+) -> str | None:
+    """Resolve DrawingML major/minor Latin, EA, and complex-script tokens."""
     if not face or not face.startswith("+"):
         return face
     code = face[1:]
@@ -529,10 +1077,31 @@ def _resolve_theme_typeface(face: str | None, theme_fonts: dict[str, str]) -> st
         return theme_fonts.get("majorLatin") or face
     if code == "mn-lt":
         return theme_fonts.get("minorLatin") or face
-    if code == "mj-ea":
-        return theme_fonts.get("majorEastAsia") or theme_fonts.get("majorLatin") or face
-    if code == "mn-ea":
-        return theme_fonts.get("minorEastAsia") or theme_fonts.get("minorLatin") or face
+    if code in {"mj-ea", "mn-ea"}:
+        prefix = "major" if code.startswith("mj") else "minor"
+        script = _run_theme_script(text, lang, alt_lang)
+        script_face = (
+            theme_fonts.get(f"{prefix}Script{script}")
+            if script is not None else None
+        )
+        return (
+            theme_fonts.get(f"{prefix}EastAsia")
+            or script_face
+            or theme_fonts.get(f"{prefix}Latin")
+            or face
+        )
+    if code == "mj-cs":
+        return (
+            theme_fonts.get("majorComplexScript")
+            or theme_fonts.get("majorLatin")
+            or face
+        )
+    if code == "mn-cs":
+        return (
+            theme_fonts.get("minorComplexScript")
+            or theme_fonts.get("minorLatin")
+            or face
+        )
     return face
 
 
@@ -562,20 +1131,24 @@ def _quote_font(name: str) -> str:
 
 
 def _resolve_bullet_prefix(
-    p_pr: ET.Element,
+    sources: tuple[ET.Element | None, ...],
     level: int,
     autonum_state: dict[int, int],
 ) -> str:
     """Render bullet glyphs / numbering as a literal text prefix."""
-    bu_none = p_pr.find("a:buNone", NS)
+    bu_none = _child_chain(sources, "a:buNone")
     if bu_none is not None:
         autonum_state.pop(level, None)
         return ""
-    bu_char = p_pr.find("a:buChar", NS)
+    bu_char = _child_chain(sources, "a:buChar")
     if bu_char is not None:
         ch = bu_char.attrib.get("char", "•")
+        bu_font = _child_chain(sources, "a:buFont")
+        typeface = bu_font.attrib.get("typeface", "") if bu_font is not None else ""
+        if typeface.casefold() == "wingdings" and ch == "l":
+            ch = "●"
         return f"{ch} "
-    bu_auto = p_pr.find("a:buAutoNum", NS)
+    bu_auto = _child_chain(sources, "a:buAutoNum")
     if bu_auto is not None:
         start_at = bu_auto.attrib.get("startAt")
         if start_at is not None:
@@ -590,6 +1163,19 @@ def _resolve_bullet_prefix(
             bu_auto.attrib.get("type", "arabicPeriod"),
         )
     return ""
+
+
+def _resolve_bullet_fill(
+    sources: tuple[ET.Element | None, ...],
+    palette: ColorPalette | None,
+) -> tuple[str | None, float]:
+    """Resolve an explicit DrawingML bullet color independently of text."""
+    bu_clr = _child_chain(sources, "a:buClr")
+    if bu_clr is None:
+        return None, 1.0
+    color_elem = find_color_elem(bu_clr)
+    color, opacity = resolve_color(color_elem, palette)
+    return color, opacity
 
 
 def _format_auto_number(value: int, kind: str) -> str:
@@ -646,9 +1232,25 @@ def _roman_number(value: int) -> str:
 def _has_visible_text(paragraphs: list[TextParagraph]) -> bool:
     for p in paragraphs:
         for r in p.runs:
-            if r.text.strip():
+            # Structured export writes U+200B only to keep a visually blank
+            # placeholder carrier alive in DrawingML. Restore that transport
+            # sentinel to an empty SVG carrier on re-import.
+            if r.text.replace("\u200b", "").strip():
                 return True
     return False
+
+
+def _collect_text_defs(paragraphs: list[TextParagraph]) -> list[str]:
+    """Return unique text fill defs referenced by parsed runs."""
+    defs: list[str] = []
+    seen: set[str] = set()
+    for para in paragraphs:
+        for run in para.runs:
+            for item in run.defs:
+                if item not in seen:
+                    defs.append(item)
+                    seen.add(item)
+    return defs
 
 
 # ---------------------------------------------------------------------------
@@ -657,27 +1259,28 @@ def _has_visible_text(paragraphs: list[TextParagraph]) -> bool:
 
 def _is_cjk(ch: str) -> bool:
     """Check if a character is CJK (Chinese/Japanese/Korean) or full-width."""
-    cp = ord(ch)
-    return (0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF or
-            0x2E80 <= cp <= 0x2EFF or 0x3000 <= cp <= 0x303F or
-            0xFF00 <= cp <= 0xFFEF or 0xF900 <= cp <= 0xFAFF or
-            0x20000 <= cp <= 0x2A6DF)
+    return is_cjk_char(ch)
 
 
 def _char_width(ch: str, font_size: float, bold: bool) -> float:
     """Estimate a single character's rendered width in pixels.
 
-    Mirrors svg_to_pptx/drawingml_utils.estimate_text_width so wrapping breaks
+    Mirrors svg_to_pptx/drawingml/utils.py estimate_text_width so wrapping breaks
     align with the same heuristic used to estimate text-box sizes elsewhere.
     """
     if _is_cjk(ch):
         w = font_size  # CJK is approximately 1em per glyph
     elif ch == ' ':
         w = font_size * 0.3
-    elif ch in 'mMwWOQ':
+    elif ch in 'mMwWOQ%':
         w = font_size * 0.75
-    elif ch in 'iIlj1!|':
+    elif ch in 'iIlj!|':
         w = font_size * 0.3
+    elif ch.isdigit():
+        # digits are tabular (uniform ~0.55em) in most UI fonts, including
+        # '1' — classing it with 'il|' under-sizes the width and makes
+        # renderers that ignore wrap="none" (LibreOffice) wrap the line
+        w = font_size * 0.55
     else:
         w = font_size * 0.55
     # Bold Latin generally expands a little. CJK glyphs keep their em advance
@@ -690,7 +1293,15 @@ def _char_width(ch: str, font_size: float, bold: bool) -> float:
 
 
 def _estimate_run_width(text: str, run: TextRun) -> float:
-    return sum(_char_width(c, run.font_size_px, run.bold) for c in text) * 1.05
+    glyph_width = sum(_char_width(c, run.font_size_px, run.bold) for c in text)
+    tracking_width = run.letter_spacing_px * max(len(text) - 1, 0)
+    return (glyph_width + tracking_width) * 1.05
+
+
+def _advance_width(ch: str, index_in_segment: int, run: TextRun) -> float:
+    """Return the width added by one character inside a measured line segment."""
+    tracking = run.letter_spacing_px if index_in_segment > 0 else 0.0
+    return _char_width(ch, run.font_size_px, run.bold) + tracking
 
 
 def _find_break_point(
@@ -708,7 +1319,7 @@ def _find_break_point(
 
     for i in range(start, len(text)):
         ch = text[i]
-        ch_w = _char_width(ch, run.font_size_px, run.bold)
+        ch_w = _advance_width(ch, i - start, run)
         if cur_w + ch_w > max_width:
             if last_break > start:
                 return last_break, last_break_w
@@ -744,20 +1355,42 @@ def _wrap_paragraph_into_lines(
         first_run = next((r for r in para.runs if not r.is_break), None)
         if first_run is not None:
             bullet_run = _copy_run(first_run, text=para.bullet_prefix)
+            if para.bullet_fill is not None:
+                bullet_run.fill = para.bullet_fill
+                bullet_run.fill_opacity = para.bullet_fill_opacity
+            hanging_width = max(-para.indent_px, 0.0)
+            measured_width = _estimate_run_width(para.bullet_prefix, bullet_run)
+            if hanging_width > measured_width:
+                space_width = _estimate_run_width(" ", bullet_run)
+                extra_spaces = round(
+                    (hanging_width - measured_width) / space_width
+                )
+                bullet_run.text += " " * max(extra_spaces, 0)
             lines[-1].append(bullet_run)
-            cur_w = _estimate_run_width(para.bullet_prefix, bullet_run)
+            cur_w = _estimate_run_width(bullet_run.text, bullet_run)
 
     for run in para.runs:
         if run.is_break:
+            # Keep the break on the line it terminates so consecutive breaks
+            # form a break-only empty line. Visible text owns a non-empty
+            # line's height; the break rPr owns only that empty line.
+            lines[-1].append(run)
             lines.append([])
             cur_w = 0.0
             continue
         if not run.text:
             continue
+        if run.formula_latex is not None:
+            width = _estimate_run_width(run.text, run)
+            if lines[-1] and cur_w + width > max_width:
+                lines.append([])
+                cur_w = 0.0
+            lines[-1].append(_copy_run(run, text=run.text))
+            cur_w += width
+            continue
         text = run.text
         i = 0
         while i < len(text):
-            remaining = text[i:]
             avail = max_width - cur_w
             if avail <= 0 and lines[-1]:
                 # Line is full; start a new one
@@ -765,21 +1398,21 @@ def _wrap_paragraph_into_lines(
                 cur_w = 0.0
                 avail = max_width
 
-            end, used = _find_break_point(remaining, 0, avail, run)
-            if end == 0:
+            end, used = _find_break_point(text, i, avail, run)
+            if end == i:
                 # Nothing fits even from a fresh line — force one char to avoid
                 # an infinite loop.
                 if lines[-1]:
                     lines.append([])
                     cur_w = 0.0
                     continue
-                end = 1
-                used = _char_width(remaining[0], run.font_size_px, run.bold)
+                end = i + 1
+                used = _advance_width(text[i], 0, run)
 
-            chunk = remaining[:end]
+            chunk = text[i:end]
             lines[-1].append(_copy_run(run, text=chunk))
             cur_w += used
-            i += end
+            i = end
 
             if i < len(text):
                 # More to render — wrap to next line
@@ -818,11 +1451,14 @@ def _copy_run(run: TextRun, *, text: str) -> TextRun:
         font_family=run.font_family,
         fill=run.fill,
         fill_opacity=run.fill_opacity,
+        defs=list(run.defs),
         bold=run.bold,
         italic=run.italic,
         underline=run.underline,
         strikethrough=run.strikethrough,
         letter_spacing_px=run.letter_spacing_px,
+        hyperlink_href=run.hyperlink_href,
+        formula_latex=run.formula_latex,
     )
 
 
@@ -830,7 +1466,7 @@ def _paragraph_height_from_lines(p: TextParagraph,
                                  lines: list[list[TextRun]]) -> float:
     """Total px height after wrapping. Each line uses its own max font size."""
     if not lines:
-        return DEFAULT_FONT_SIZE_PX * p.line_height_ratio
+        return p.empty_line_font_size_px * p.line_height_ratio
     height = 0.0
     for line in lines:
         height += _line_height(p, line)
@@ -838,8 +1474,19 @@ def _paragraph_height_from_lines(p: TextParagraph,
 
 
 def _line_height(p: TextParagraph, line: list[TextRun]) -> float:
-    max_font = max((r.font_size_px for r in line), default=DEFAULT_FONT_SIZE_PX)
-    return max_font * p.line_height_ratio
+    return _line_font_size(p, line) * p.line_height_ratio
+
+
+def _line_font_size(p: TextParagraph, line: list[TextRun]) -> float:
+    visible_sizes = [
+        run.font_size_px
+        for run in line
+        if not run.is_break and run.text
+    ]
+    if visible_sizes:
+        return max(visible_sizes)
+    break_sizes = [run.font_size_px for run in line if run.is_break]
+    return max(break_sizes, default=p.empty_line_font_size_px)
 
 
 def _clip_lines_to_bottom(
@@ -865,16 +1512,8 @@ def _clip_lines_to_bottom(
 
 def _paragraph_height(p: TextParagraph) -> float:
     """Legacy helper kept for callers that don't pre-wrap (currently unused)."""
-    lines = 1
-    max_font = 0.0
-    for r in p.runs:
-        if r.is_break:
-            lines += 1
-            continue
-        max_font = max(max_font, r.font_size_px)
-    if max_font == 0.0:
-        max_font = DEFAULT_FONT_SIZE_PX
-    return lines * max_font * p.line_height_ratio
+    lines = _wrap_paragraph_into_lines(p, float("inf"))
+    return _paragraph_height_from_lines(p, lines)
 
 
 def _emit_paragraph(
@@ -900,39 +1539,72 @@ def _emit_paragraph(
         anchor_x = inner_x + para.indent_px + para.margin_left_px
         text_anchor = "start"
 
-    if not lines or all(not line for line in lines):
+    if not lines:
         return ""
 
-    # First non-empty line drives the text-level baseline + default style
-    first_line_idx = next((i for i, ln in enumerate(lines) if ln), 0)
-    first_line = lines[first_line_idx]
-    first_run = first_line[0] if first_line else None
-    first_font = first_run.font_size_px if first_run else DEFAULT_FONT_SIZE_PX
-    first_baseline = top_y + 0.85 * first_font
+    visible_lines = [
+        [run for run in line if not run.is_break and run.text]
+        for line in lines
+    ]
+    first_line_idx = next(
+        (index for index, line in enumerate(visible_lines) if line),
+        None,
+    )
+    if first_line_idx is None:
+        return ""
+
+    first_run = visible_lines[first_line_idx][0]
+    first_baseline = top_y + 0.85 * first_run.font_size_px
 
     spans: list[str] = []
-    for line_idx, line in enumerate(lines):
-        if not line:
-            # Blank line (e.g. consecutive a:br): still advance baseline
-            spans.append(
-                f'<tspan x="{fmt_num(anchor_x)}" '
-                f'dy="{fmt_num(first_font * para.line_height_ratio)}"></tspan>'
+    for line_idx, line in enumerate(visible_lines):
+        line_advance = None
+        if line_idx > 0:
+            height_line = (
+                lines[line_idx - 1]
+                if line_idx <= first_line_idx else lines[line_idx]
             )
-            continue
-        line_font = max(r.font_size_px for r in line)
-        for run_idx, run in enumerate(line):
-            attrs = _run_tspan_attrs(run)
-            if run_idx == 0 and line_idx > 0:
-                # Start-of-line tspan: position via x + dy
+            line_advance = _line_height(para, height_line)
+        if not line:
+            if line_advance is not None:
                 spans.append(
                     f'<tspan x="{fmt_num(anchor_x)}" '
-                    f'dy="{fmt_num(line_font * para.line_height_ratio)}"'
-                    f'{attrs}>{_xml_escape(run.text)}</tspan>'
+                    f'dy="{fmt_num(line_advance)}"></tspan>'
                 )
+            continue
+        line_has_hyperlink = any(run.hyperlink_href for run in line)
+        if line_has_hyperlink:
+            run_spans = ''.join(
+                _wrap_run_hyperlink(
+                    _run_tspan_markup(run),
+                    run,
+                )
+                for run in line
+            )
+            position_attrs = (
+                f' x="{fmt_num(anchor_x)}" dy="{fmt_num(line_advance)}"'
+                if line_advance is not None
+                else ''
+            )
+            spans.append(f'<tspan{position_attrs}>{run_spans}</tspan>')
+            continue
+        for run_idx, run in enumerate(line):
+            attrs = _run_tspan_attrs(run)
+            if run_idx == 0 and line_advance is not None:
+                if run.formula_latex is not None:
+                    spans.append(
+                        f'<tspan x="{fmt_num(anchor_x)}" '
+                        f'dy="{fmt_num(line_advance)}">'
+                        f'{_run_tspan_markup(run)}</tspan>'
+                    )
+                else:
+                    spans.append(
+                        f'<tspan x="{fmt_num(anchor_x)}" '
+                        f'dy="{fmt_num(line_advance)}"'
+                        f'{attrs}>{_xml_escape(run.text)}</tspan>'
+                    )
             else:
-                spans.append(
-                    f"<tspan{attrs}>{_xml_escape(run.text)}</tspan>"
-                )
+                spans.append(_run_tspan_markup(run))
 
     base_attrs = _text_base_attrs(first_run, anchor_x, first_baseline, text_anchor)
     return f"<text{base_attrs}>{''.join(spans)}</text>"
@@ -952,7 +1624,9 @@ def _text_base_attrs(run: TextRun | None, x: float, y: float,
     parts.append(f'font-size="{fmt_num(run.font_size_px)}"')
     parts.append(f'fill="{run.fill}"')
     if run.fill_opacity < 1.0:
-        parts.append(f'fill-opacity="{fmt_num(run.fill_opacity, 4)}"')
+        parts.append(
+            f'fill-opacity="{format_ooxml_alpha(run.fill_opacity)}"'
+        )
     if run.bold:
         parts.append('font-weight="bold"')
     if run.italic:
@@ -972,15 +1646,18 @@ def _run_tspan_attrs(run: TextRun) -> str:
     """Per-run overrides on a <tspan>. Only emit attributes that differ from
     the run that drove the parent <text> (we keep things simple: emit only
     overrides that can plausibly change run-to-run, never re-emit common
-    defaults). For v1 we just always emit fill / font-size / weight to be
-    safe — tspan inherits when omitted, so callers can simplify later.
+    defaults). For v1 we always emit fill, font family, and font size so each
+    imported run keeps its resolved typeface even when adjacent runs differ.
     """
     parts = [
         f'fill="{run.fill}"',
+        f'font-family="{run.font_family}"',
         f'font-size="{fmt_num(run.font_size_px)}"',
     ]
     if run.fill_opacity < 1.0:
-        parts.append(f'fill-opacity="{fmt_num(run.fill_opacity, 4)}"')
+        parts.append(
+            f'fill-opacity="{format_ooxml_alpha(run.fill_opacity)}"'
+        )
     if run.bold:
         parts.append('font-weight="bold"')
     if run.italic:
@@ -994,6 +1671,27 @@ def _run_tspan_attrs(run: TextRun) -> str:
     if run.letter_spacing_px:
         parts.append(f'letter-spacing="{fmt_num(run.letter_spacing_px)}"')
     return " " + " ".join(parts)
+
+
+def _run_tspan_markup(run: TextRun) -> str:
+    formula_attr = ""
+    if run.formula_latex is not None:
+        formula_attr = (
+            ' data-pptx-inline-formula="'
+            + _xml_escape(run.formula_latex)
+            + '"'
+        )
+    return (
+        f"<tspan{_run_tspan_attrs(run)}{formula_attr}>"
+        f"{_xml_escape(run.text)}</tspan>"
+    )
+
+
+def _wrap_run_hyperlink(markup: str, run: TextRun) -> str:
+    """Wrap one visible SVG run in the canonical hyperlink carrier."""
+    if not run.hyperlink_href:
+        return markup
+    return f'<a href="{_xml_escape(run.hyperlink_href)}">{markup}</a>'
 
 
 def _xml_escape(text: str) -> str:

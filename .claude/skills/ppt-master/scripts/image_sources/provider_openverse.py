@@ -9,10 +9,21 @@ API docs: https://api.openverse.org/v1/
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+from urllib.parse import quote, unquote, urlparse
 
-if __name__ == "__main__" and any(arg in {"-h", "--help", "help"} for arg in sys.argv[1:]):
+_SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from console_encoding import configure_utf8_stdio  # noqa: E402
+
+configure_utf8_stdio()
+
+if __name__ == "__main__":
     print(__doc__)
-    raise SystemExit(0)
+    print("Use via: python3 skills/ppt-master/scripts/image_search.py ...")
+    raise SystemExit(0 if any(arg in {"-h", "--help", "help"} for arg in sys.argv[1:]) else 1)
 
 import requests
 
@@ -39,6 +50,20 @@ _LICENSE_PARAM = {
     "no-attribution-only": "cc0,pdm",
     "all": "by,by-sa,cc0,pdm",
 }
+
+
+def _preview_url(item: dict, download_url: str) -> str:
+    """Prefer Wikimedia's bounded preview over Openverse's fragile proxy."""
+    source = str(item.get("source") or item.get("provider") or "").lower()
+    parsed = urlparse(download_url)
+    if source == "wikimedia" and parsed.netloc == "upload.wikimedia.org":
+        filename = unquote(parsed.path.rsplit("/", 1)[-1])
+        if filename:
+            return (
+                "https://commons.wikimedia.org/wiki/Special:Redirect/file/"
+                f"{quote(filename, safe='')}?width=1024"
+            )
+    return (item.get("thumbnail") or "").strip()
 
 
 def parse_results(payload: dict) -> list[AssetCandidate]:
@@ -69,6 +94,7 @@ def parse_results(payload: dict) -> list[AssetCandidate]:
                 width=int(item.get("width") or 0),
                 height=int(item.get("height") or 0),
                 download_url=download_url,
+                preview_url=_preview_url(item, download_url),
                 author=(item.get("creator") or "").strip(),
                 raw=item,
             )
